@@ -119,3 +119,69 @@ test("auto binding is unknown rather than assumed safe", () => {
     },
   );
 });
+
+test("implicit loopback with Tailscale Funnel reports public exposure", () => {
+  assert.deepEqual(
+    assessGatewayExposure({
+      gateway: {
+        tailscale: { mode: "funnel" },
+        auth: { mode: "password", password: "configured" },
+      },
+    }),
+    {
+      grade: "warning",
+      bind: "tailscale funnel (public)",
+      auth: "password",
+      summary: "Public internet exposure via Tailscale Funnel.",
+    },
+  );
+});
+
+test("explicit loopback with Tailscale Funnel still reports public exposure", () => {
+  assert.deepEqual(
+    assessGatewayExposure({
+      gateway: {
+        bind: "loopback",
+        tailscale: { mode: "funnel" },
+        auth: { mode: "password", password: "configured" },
+      },
+    }),
+    {
+      grade: "warning",
+      bind: "tailscale funnel (public)",
+      auth: "password",
+      summary: "Public internet exposure via Tailscale Funnel.",
+    },
+  );
+});
+
+test("Tailscale Funnel without evidenced password auth is critical", () => {
+  assert.deepEqual(
+    assessGatewayExposure({
+      gateway: {
+        tailscale: { mode: "funnel" },
+        auth: { mode: "password" },
+      },
+    }),
+    {
+      grade: "critical",
+      bind: "tailscale funnel (public)",
+      auth: "password",
+      summary: "Public Tailscale Funnel exposure lacks evidenced password authentication.",
+    },
+  );
+});
+
+test("Tailscale Serve reports tailnet exposure", () => {
+  assert.deepEqual(
+    assessGatewayExposure({
+      gateway: { tailscale: { mode: "serve" } },
+    }),
+    {
+      grade: "warning",
+      bind: "tailscale serve (tailnet)",
+      auth: "default",
+      summary: "Gateway is reachable from the tailnet via Tailscale Serve.",
+    },
+  );
+});
