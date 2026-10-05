@@ -1,0 +1,17 @@
+name: Proxy waitlist
+description: Tell me when the optional nova-guard proxy ships.
+title: "[waitlist] Proxy updates"
+labels: ["waitlist"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This public issue records one waitlist signal. Do not include secrets,
+        configuration files, private report details, or personal information.
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Confirmation
+      options:
+        - label: I want an update when the optional proxy is available.
+          required: true

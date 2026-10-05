@@ -1,0 +1,39 @@
+name: Exact-head review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  exact-head-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invalidate review after a new head
+        if: github.event.action == 'synchronize'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --method DELETE \
+            "repos/$REPOSITORY/issues/$PR_NUMBER/labels/claude-reviewed" \
+            >/dev/null 2>&1 || true
+          echo "A changed head requires a new Claude review." >&2
+          exit 1
+
+      - name: Require the reviewed-head label
+        if: github.event.action != 'synchronize'
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          case ",$LABELS," in
+            *,claude-reviewed,*) ;;
+            *)
+              echo "Exact PR head has not been marked as reviewed by Claude." >&2
+              exit 1
+              ;;
+          esac
