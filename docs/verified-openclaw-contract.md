@@ -26,9 +26,14 @@ Sources:
 - `gateway.bind` accepts `auto`, `loopback`, `lan`, `tailnet`, or `custom`.
 - On bare-metal and VM hosts, `loopback` is the default. In a detected
   container, an omitted bind defaults to `auto`, which resolves to `0.0.0.0`
-  for port-forwarding compatibility. Tailscale serve/funnel keeps the default
-  on loopback.
+  for port-forwarding compatibility.
 - `lan` binds to `0.0.0.0`.
+- `gateway.tailscale.mode: "serve"` exposes the gateway to the tailnet through
+  Tailscale Serve even though the process stays bound to loopback.
+- `gateway.tailscale.mode: "funnel"` exposes the gateway to the public internet
+  through Tailscale Funnel while the process stays bound to loopback. OpenClaw
+  requires password authentication for this mode and refuses to start without
+  it.
 - Non-loopback exposure requires a valid token, password, or trusted-proxy
   authentication path and should be constrained by a firewall.
 - The default gateway port is `18789`; command-line and environment overrides
@@ -38,6 +43,7 @@ Sources:
 
 - <https://docs.openclaw.ai/gateway/config-gateway>
 - <https://docs.openclaw.ai/gateway/security/network-exposure>
+- <https://docs.openclaw.ai/gateway/tailscale>
 - <https://docs.openclaw.ai/help/faq/config-basics>
 
 ## Version

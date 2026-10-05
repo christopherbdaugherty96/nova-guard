@@ -59,6 +59,31 @@ export function assessGatewayExposure(
   config: OpenClawConfig,
   context: GatewayRuntimeContext = {},
 ): GatewayExposureResult {
+  const tailscaleMode = config.gateway?.tailscale?.mode;
+  const auth = authMode(config);
+
+  if (tailscaleMode === "funnel") {
+    const passwordVerified =
+      auth === "password" && hasAuthEvidence(config, context);
+    return {
+      grade: passwordVerified ? "warning" : "critical",
+      bind: "tailscale funnel (public)",
+      auth,
+      summary: passwordVerified
+        ? "Public internet exposure via Tailscale Funnel."
+        : "Public Tailscale Funnel exposure lacks evidenced password authentication.",
+    };
+  }
+
+  if (tailscaleMode === "serve") {
+    return {
+      grade: "warning",
+      bind: "tailscale serve (tailnet)",
+      auth,
+      summary: "Gateway is reachable from the tailnet via Tailscale Serve.",
+    };
+  }
+
   const bindValue = config.gateway?.bind;
   let bind: string;
   if (typeof bindValue === "string") {
@@ -76,12 +101,10 @@ export function assessGatewayExposure(
     return {
       grade: "unknown",
       bind: "default",
-      auth: authMode(config),
+      auth,
       summary: "Gateway default binding depends on the runtime environment.",
     };
   }
-  const auth = authMode(config);
-
   if (bind === "loopback") {
     return {
       grade: "pass",
