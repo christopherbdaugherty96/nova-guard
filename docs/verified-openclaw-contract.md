@@ -24,7 +24,11 @@ Sources:
 ## Gateway
 
 - `gateway.bind` accepts `auto`, `loopback`, `lan`, `tailnet`, or `custom`.
-- `loopback` is the default. `lan` binds to `0.0.0.0`.
+- On bare-metal and VM hosts, `loopback` is the default. In a detected
+  container, an omitted bind defaults to `auto`, which resolves to `0.0.0.0`
+  for port-forwarding compatibility. Tailscale serve/funnel keeps the default
+  on loopback.
+- `lan` binds to `0.0.0.0`.
 - Non-loopback exposure requires a valid token, password, or trusted-proxy
   authentication path and should be constrained by a firewall.
 - The default gateway port is `18789`; command-line and environment overrides
