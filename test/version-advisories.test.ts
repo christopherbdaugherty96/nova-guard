@@ -75,6 +75,7 @@ test("a version glued to other text cannot be bypassed by another date", () => {
     "\x1b[2K2026.1.28 built 2026.2.3",
     "\uff12\uff10\uff12\uff16.\uff11.\uff12\uff18 built 2026.2.3",
     "openclaw 2026.1 built 2026.2.3",
+    "openclaw 2026. (built 2026.9.2)",
   ]) {
     assert.equal(assessOpenClawVersion(input).grade, "unknown", JSON.stringify(input));
   }
