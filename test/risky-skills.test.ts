@@ -591,3 +591,16 @@ test("symlink resolution during discovery is bounded and the remainder is unknow
 test("the real path resolver is the single-syscall native one", () => {
   assert.equal(nodeSkillFs.realpath.toString().includes("native"), true);
 });
+
+test("symlinks into deep trees are charged by depth, so they cannot stall discovery", posixOnly, () => {
+  fixture((_root, at) => {
+    const managed = path.join(at.stateDir, "skills");
+    const deep = path.join(managed, "real", ...Array.from({ length: 40 }, () => "c"));
+    mkdirSync(deep, { recursive: true });
+    for (let i = 0; i < 3; i += 1) symlinkSync(deep, path.join(managed, `l${i}`));
+    const depth = deep.split(path.sep).length;
+    const result = assessRiskySkills(at, none, nodeSkillFs, { maxSymlinkCost: depth * depth + 1 });
+    assert.equal(result.grade, "unknown");
+    assert.deepEqual(result.unknown, [{ path: managed, reason: "discovery-truncated" }]);
+  });
+});
