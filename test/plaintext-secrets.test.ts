@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -240,6 +241,126 @@ test("reported keys are sanitized and bounded", () => {
   assert.ok(!/[\u0000-\u001f\u007f]/.test(result.findings[0]!.key));
   assert.ok(result.findings[0]!.key.length <= 200);
   assertNoLeak(result);
+});
+
+test(".env files are parsed the way OpenClaw's dotenv parser reads them", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [stateEnv]: [
+        `OPENAI_API_KEY="`,
+        SECRET_A,
+        `"`,
+        `PLAIN=1\rDISCORD_BOT_TOKEN=${SECRET_B}\r`,
+        `SLACK_TOKEN: ${SECRET_C}`,
+        `openai.api-key=${SECRET_D}`,
+        "QUOTED_EMPTY_TOKEN=''",
+      ].join("\n"),
+    }),
+  );
+  assert.deepEqual(keys(result), [
+    `plaintext ${stateEnv}:1 OPENAI_API_KEY`,
+    `plaintext ${stateEnv}:5 DISCORD_BOT_TOKEN`,
+    `plaintext ${stateEnv}:6 SLACK_TOKEN`,
+    `plaintext ${stateEnv}:7 openai.api-key`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("camelCase secret names and arrays under secret names are reported", () => {
+  const config = JSON.stringify({
+    ssh: { privateKey: SECRET_A, publicKey: "ssh-ed25519 AAAA" },
+    cloud: { accessKey: SECRET_B },
+    providers: { o: { apiKeys: [SECRET_C, "${OTHER_API_KEY}"] } },
+  });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [
+    `plaintext ${configPath} ssh.privateKey`,
+    `plaintext ${configPath} cloud.accessKey`,
+    `plaintext ${configPath} providers.o.apiKeys.0`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("literal text around a reference is still plaintext; a bare reference is not", () => {
+  const config = JSON.stringify({
+    a: { apiKey: `\${X}${SECRET_A}` },
+    b: { apiKey: `${SECRET_B}\${OPENAI_API_KEY}` },
+    c: { apiKey: `\${X:-}${SECRET_C}` },
+    d: { headers: { Authorization: "Bearer ${CUSTOM_TOKEN}" } },
+    e: { apiKey: "  ${OPENAI_API_KEY}  " },
+  });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [
+    `plaintext ${configPath} a.apiKey`,
+    `plaintext ${configPath} b.apiKey`,
+    `plaintext ${configPath} c.apiKey`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("numeric passwords are plaintext; numeric token counts are not", () => {
+  const config = "{ db: { password: 918273645 }, agents: { defaults: { maxTokens: 4096 } } }";
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [`plaintext ${configPath} db.password`]);
+  assertNoLeak(result, ["918273645"]);
+});
+
+test("env-var-name markers are exempt only in apiKey fields", () => {
+  const config = JSON.stringify({
+    gateway: { auth: { token: "OPENCLAW_GATEWAY_TOKEN" } },
+    models: { providers: { openai: { apiKey: "OPENAI_API_KEY" } } },
+  });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [`plaintext ${configPath} gateway.auth.token`]);
+});
+
+test("a models.json apiKey that is only a reference is not plaintext", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({ [mainModels]: JSON.stringify({ providers: { o: { apiKey: "${OPENAI_API_KEY}" } } }) }),
+  );
+  assert.equal(result.grade, "pass");
+});
+
+test("a path segment that looks like a credential is redacted, not reported", () => {
+  const keyLike = "sk-ant-api03-Qz7Lm2Wk4RtHy6TnQ3sDf8Jc1Vb";
+  const config = JSON.stringify({ gateway: { tokens: { [keyLike]: { apiKey: SECRET_A } } } });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [`plaintext ${configPath} gateway.tokens.<redacted>.apiKey`]);
+  assertNoLeak(result, [...SECRETS, keyLike]);
+});
+
+test("crafted unterminated references are handled in linear time", () => {
+  const config = JSON.stringify({ p: { apiKey: "${A:-".repeat(40_000) } });
+  const started = performance.now();
+  assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.ok(performance.now() - started < 500);
+});
+
+test("a FIFO or other non-regular file is unknown and never blocks the scan", { skip: process.platform === "win32" }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "nova-guard-fifo-"));
+  try {
+    const fifo = path.join(dir, ".env");
+    execFileSync("mkfifo", [fifo]);
+    // A blocking open would hang this process, so read in a child with a timeout.
+    const moduleUrl = new URL("../src/checks/plaintext-secrets.ts", import.meta.url).href;
+    const output = execFileSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `const { nodeSecretFileReader } = await import(${JSON.stringify(moduleUrl)});
+         process.stdout.write(JSON.stringify(nodeSecretFileReader.readText(${JSON.stringify(fifo)})));`,
+      ],
+      { timeout: 5000, encoding: "utf8" },
+    );
+    assert.deepEqual(JSON.parse(output), { status: "unreadable" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the real file reader is read-only and reports missing, ok, and oversized files", () => {
