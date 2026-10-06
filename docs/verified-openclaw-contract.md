@@ -136,6 +136,15 @@ scanner reads, never writes:
   plaintext secret when either the key or `VAR` is secret-like, because the
   fallback is config text (docs: config-secrets-env). `$${VAR}` is an escaped
   literal, and only upper-case names are substituted.
+- Files pulled in by `$include` (a string or array of strings anywhere in a
+  config document) are scanned the same way, following OpenClaw's rules
+  (`src/config/includes.ts`, `src/config/includes-scan.ts`): paths resolve
+  against the including file, must stay inside the config directory or an
+  `OPENCLAW_INCLUDE_ROOTS` root (others are refused by OpenClaw and are never
+  read), and nest at most 10 deep. Each file is scanned once, so cycles end. A
+  missing, unreadable, unparseable, or too-deep include is `unknown`. The
+  check is lexical; OpenClaw's extra symlink-realpath check is not repeated,
+  so an in-root symlink may be scanned even if OpenClaw would refuse it.
 - `<stateDir>/agents/*/agent/models.json` (always including `main`):
   `providers.*.apiKey` unless it is one of OpenClaw's non-secret markers
   (`src/agents/model-auth-markers.ts`), and `providers.*.headers.*` whose name

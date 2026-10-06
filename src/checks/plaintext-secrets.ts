@@ -14,6 +14,8 @@ export interface SecretLocations {
   /** OPENCLAW_CONFIG_PATH, normally <stateDir>/openclaw.json. */
   configPath: string;
   homeDir: string;
+  /** Extra $include roots from OPENCLAW_INCLUDE_ROOTS, already resolved. */
+  includeRoots?: readonly string[];
 }
 
 export type SecretFileRead =
@@ -53,6 +55,9 @@ export interface PlaintextSecretsResult {
 /** Larger files are not read; a real config or .env is far smaller. */
 const maxFileBytes = 1024 * 1024;
 const maxDepth = 64;
+// OpenClaw's own limit (src/config/includes.ts): includes nest at most 10 deep.
+const maxIncludeDepth = 10;
+const includeKey = "$include";
 const maxKeyLength = 200;
 
 // Mirrors OpenClaw's own secrets audit: substring fragments that mark a name
@@ -330,6 +335,25 @@ function scanConfig(file: string, parsed: unknown): SecretFinding[] | undefined 
   return complete ? findings : undefined;
 }
 
+/** Every "$include" path in a document, in order (string or array of strings). */
+function listIncludes(node: unknown, found: string[] = [], depth = 0): string[] {
+  if (depth > maxDepth || node === null || typeof node !== "object") return found;
+  if (Array.isArray(node)) {
+    for (const item of node) listIncludes(item, found, depth + 1);
+    return found;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === includeKey) {
+      for (const item of Array.isArray(value) ? value : [value]) {
+        if (typeof item === "string") found.push(item);
+      }
+    } else {
+      listIncludes(value, found, depth + 1);
+    }
+  }
+  return found;
+}
+
 function scanModelsJson(file: string, parsed: unknown): SecretFinding[] {
   const findings: SecretFinding[] = [];
   const providers = (parsed as { providers?: unknown } | null)?.providers;
@@ -366,9 +390,14 @@ export function assessPlaintextSecrets(
   const unreadable: string[] = [];
   const scanned: string[] = [];
 
-  const read = (file: string, scan: (text: string) => SecretFinding[] | undefined) => {
+  // A required file (an $include target) that is missing cannot be ruled out.
+  const read = (
+    file: string,
+    scan: (text: string) => SecretFinding[] | undefined,
+    required = false,
+  ) => {
     const result = reader.readText(file);
-    if (result.status === "missing") return;
+    if (result.status === "missing" && !required) return;
     const found = result.status === "ok" ? scan(result.text) : undefined;
     if (found === undefined) {
       unreadable.push(sanitize(file));
@@ -393,10 +422,48 @@ export function assessPlaintextSecrets(
   ]);
   for (const file of envFiles) read(file, (text) => scanEnvFile(file, text));
 
-  read(locations.configPath, (text) => {
-    const parsed = parse(text);
-    return parsed === undefined ? undefined : scanConfig(locations.configPath, parsed);
-  });
+  // OpenClaw's $include rules (src/config/includes.ts): paths resolve against
+  // the including file, must stay inside the config directory or an
+  // OPENCLAW_INCLUDE_ROOTS root (others are refused, so never read), and nest
+  // at most ten deep. Each file is scanned once, so cycles terminate.
+  const includeRoots = [path.dirname(locations.configPath), ...(locations.includeRoots ?? [])].map(
+    (root) => path.resolve(root),
+  );
+  const insideIncludeRoot = (file: string) =>
+    includeRoots.some((root) => {
+      const relative = path.relative(root, file);
+      return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+    });
+  const visitedConfigs = new Set<string>();
+  const scanConfigFile = (file: string, depth: number) => {
+    if (visitedConfigs.has(path.resolve(file))) return;
+    visitedConfigs.add(path.resolve(file));
+    const includes: string[] = [];
+    read(
+      file,
+      (text) => {
+        const parsed = parse(text);
+        if (parsed === undefined) return undefined;
+        for (const include of listIncludes(parsed)) {
+          const target = path.isAbsolute(include)
+            ? path.normalize(include)
+            : path.resolve(path.dirname(file), include);
+          if (insideIncludeRoot(target)) includes.push(target);
+        }
+        return scanConfig(file, parsed);
+      },
+      depth > 0,
+    );
+    for (const target of includes) {
+      if (depth + 1 > maxIncludeDepth) {
+        // OpenClaw rejects deeper nesting; the file cannot be ruled out here.
+        if (!visitedConfigs.has(path.resolve(target))) unreadable.push(sanitize(target));
+        continue;
+      }
+      scanConfigFile(target, depth + 1);
+    }
+  };
+  scanConfigFile(locations.configPath, 0);
 
   const agentsRoot = path.join(locations.stateDir, "agents");
   const agents = reader.listDirectories(agentsRoot);
