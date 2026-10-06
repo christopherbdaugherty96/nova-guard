@@ -249,3 +249,46 @@ test("unrecognized Tailscale mode is unknown", () => {
   assert.equal(result.grade, "unknown");
   assert.match(result.summary, /Tailscale|unrecognized/i);
 });
+
+test("omitted auth mode resolves to token when a token is configured", () => {
+  const result = assessGatewayExposure({
+    gateway: { bind: "lan", auth: { token: "configured" } },
+  });
+  assert.equal(result.grade, "warning");
+  assert.equal(result.auth, "token");
+});
+
+test("trusted proxy requires its identity header", () => {
+  const result = assessGatewayExposure({
+    gateway: {
+      bind: "lan",
+      auth: { mode: "trusted-proxy" },
+      trustedProxies: ["127.0.0.1"],
+    },
+  });
+  assert.equal(result.grade, "unknown");
+});
+
+test("complete trusted proxy configuration is evidenced", () => {
+  const result = assessGatewayExposure({
+    gateway: {
+      bind: "lan",
+      auth: {
+        mode: "trusted-proxy",
+        trustedProxy: { userHeader: "x-forwarded-user" },
+      },
+      trustedProxies: ["127.0.0.1"],
+    },
+  });
+  assert.equal(result.grade, "warning");
+});
+
+test("nonempty environment fallback is evidence of configured auth", () => {
+  const result = assessGatewayExposure({
+    gateway: {
+      bind: "lan",
+      auth: { mode: "token", token: "${OPENCLAW_GATEWAY_TOKEN:-configured}" },
+    },
+  });
+  assert.equal(result.grade, "warning");
+});
