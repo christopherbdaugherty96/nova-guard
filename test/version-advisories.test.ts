@@ -29,6 +29,27 @@ const fixture: readonly BundledAdvisory[] = [
     title: "Fixture: issue introduced in 2026.4.7",
   },
   {
+    ghsa: "GHSA-0000-0000-0003",
+    package: "openclaw",
+    severity: "high",
+    vulnerableVersions: ">=2026.5.1 <=2026.5.3-1",
+    title: "Fixture: fixed in hotfix 2026.5.3-2",
+  },
+  {
+    ghsa: "GHSA-0000-0000-0004",
+    package: "openclaw",
+    severity: "high",
+    vulnerableVersions: ">=2026.7.1 <=2026.7.2",
+    title: "Fixture: inclusive bound on a release",
+  },
+  {
+    ghsa: "GHSA-0000-0000-0005",
+    package: "openclaw",
+    severity: "high",
+    vulnerableVersions: ">=2026.8.1-0 <2026.8.3",
+    title: "Fixture: SemVer lowest-prerelease lower bound",
+  },
+  {
     ghsa: "GHSA-0000-0000-0001",
     package: "openclaw",
     severity: "low",
@@ -115,6 +136,33 @@ test("a numeric hotfix suffix is graded at least as severely as its release", ()
   assert.deepEqual(hotfix.advisories, ["GHSA-0000-0000-0002"]);
   assert.equal(hotfix.version, "2026.4.7-1");
   assert.equal(assessOpenClawVersion("2026.4.7-beta.1").grade, "pass");
+});
+
+test("a release precedes its own numeric hotfixes in advisory ranges", () => {
+  // >=2026.5.1 <=2026.5.3-1 covers 2026.5.3 and 2026.5.3-1 but not the fixed 2026.5.3-2.
+  assert.equal(assessOpenClawVersion("2026.5.3").grade, "critical");
+  assert.equal(assessOpenClawVersion("OpenClaw 2026.5.3-1").grade, "critical");
+  assert.equal(assessOpenClawVersion("2026.5.3-2").grade, "pass");
+  assert.equal(assessOpenClawVersion("2026.5.3-beta.1").grade, "critical");
+  assert.equal(assessOpenClawVersion("2026.5.1-beta.1").grade, "pass");
+});
+
+test("a hotfix published after a fixed release is not affected", () => {
+  // >=2026.4.7 <2026.4.9: the fix shipped in 2026.4.9, before 2026.4.9-1.
+  assert.equal(assessOpenClawVersion("2026.4.9-1").grade, "pass");
+  assert.equal(assessOpenClawVersion("2026.4.9-beta.1").grade, "critical");
+});
+
+test("an inclusive bound on a release still covers that release's hotfixes", () => {
+  // <=2026.7.2 does not say whether 2026.7.2-1 carried the fix.
+  assert.equal(assessOpenClawVersion("2026.7.2-1").grade, "critical");
+  assert.equal(assessOpenClawVersion("2026.7.3").grade, "pass");
+});
+
+test("a -0 lower bound keeps its SemVer meaning of every prerelease", () => {
+  assert.equal(assessOpenClawVersion("2026.8.1").grade, "critical");
+  assert.equal(assessOpenClawVersion("2026.8.1-beta.1").grade, "critical");
+  assert.equal(assessOpenClawVersion("2026.7.31").grade, "pass");
 });
 
 test("ANSI and other terminal escapes do not hide the version", () => {
