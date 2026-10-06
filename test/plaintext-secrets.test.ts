@@ -458,10 +458,11 @@ test("config files referenced by $include are scanned with OpenClaw's rules", ()
       [slackFile]: `{ slack: { botToken: "${SECRET_C}" } }`,
     }),
   );
+  // Findings name the file holding the secret and its logical config path.
   assert.deepEqual(keys(result), [
-    `plaintext ${gatewayFile} auth.token`,
-    `plaintext ${discordFile} discord.token`,
-    `plaintext ${slackFile} slack.botToken`,
+    `plaintext ${gatewayFile} gateway.auth.token`,
+    `plaintext ${discordFile} channels.discord.token`,
+    `plaintext ${slackFile} channels.slack.botToken`,
   ]);
   assertNoLeak(result);
 });
@@ -495,6 +496,41 @@ test("$include cycles terminate and paths outside the config roots are not read"
   const withRoot = assessPlaintextSecrets({ ...locations, includeRoots: [sharedRoot] }, reader);
   assert.deepEqual(keys(withRoot), [`plaintext ${b} *.token`, `plaintext ${shared} token`]);
   assertNoLeak(withRoot);
+});
+
+test("an included value inherits the key it replaces", () => {
+  const tokenFile = path.join(stateDir, "token.json5");
+  const listFile = path.join(stateDir, "keys.json5");
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [configPath]: `{ gateway: { auth: { token: { $include: "./token.json5" } } }, models: { providers: { o: { apiKeys: { $include: "./keys.json5" } } } } }`,
+      [tokenFile]: `"${SECRET_A}"`,
+      [listFile]: `["${SECRET_B}"]`,
+    }),
+  );
+  assert.deepEqual(keys(result), [
+    `plaintext ${tokenFile} gateway.auth.token`,
+    `plaintext ${listFile} models.providers.*.apiKeys.0`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("a file reached first too deep is rescanned when a shallower include reaches it", () => {
+  const files: Record<string, string> = {
+    [configPath]: `{ $include: ["./c1.json5", "./shared.json5"] }`,
+    [path.join(stateDir, "shared.json5")]: `{ $include: "./child.json5" }`,
+    [path.join(stateDir, "child.json5")]: `{ token: "${SECRET_A}" }`,
+  };
+  for (let depth = 1; depth <= 8; depth += 1) {
+    files[path.join(stateDir, `c${depth}.json5`)] = `{ $include: "./c${depth + 1}.json5" }`;
+  }
+  files[path.join(stateDir, "c9.json5")] = `{ $include: "./shared.json5" }`;
+  const result = assessPlaintextSecrets(locations, fakeReader(files));
+  assert.equal(result.grade, "warning");
+  assert.deepEqual(result.unreadable, []);
+  assert.deepEqual(keys(result), [`plaintext ${path.join(stateDir, "child.json5")} token`]);
+  assertNoLeak(result);
 });
 
 test("missing, unparseable, or too deeply nested includes are unknown", () => {
