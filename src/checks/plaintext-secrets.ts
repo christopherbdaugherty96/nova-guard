@@ -3,7 +3,7 @@
 // Reports contain only a location (file, and line for .env files) and a key
 // name. Secret values, any fragment of them, lengths, hashes, and parser error
 // messages (which can quote file bytes) are never placed in a result.
-import { closeSync, fstatSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import JSON5 from "json5";
@@ -68,8 +68,17 @@ const secretNameFragments = [
 // Names that point at a secret held elsewhere rather than holding one.
 const indirectNameSuffix = /(?:file|path|env|ref|url|uri)$/;
 
+/** "apiKeys", "API_KEY", "openai.api-key" -> "api-keys", "api-key", "openai-api-key". */
+function normalizeName(name: string): string {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+    .toLowerCase()
+    .replace(/[_.\s]+/g, "-");
+}
+
 export function isSecretLikeName(name: string): boolean {
-  const normalized = name.toLowerCase().replace(/_/g, "-");
+  const normalized = normalizeName(name);
   if (normalized === "key" || normalized === "authorization" || normalized === "proxy-authorization") {
     return true;
   }
@@ -77,6 +86,15 @@ export function isSecretLikeName(name: string): boolean {
     return false;
   }
   return secretNameFragments.some((fragment) => normalized.includes(fragment));
+}
+
+/** Numbers are checked only under names that hold a secret, never counts like maxTokens. */
+function isNumericSecretName(name: string): boolean {
+  const normalized = normalizeName(name);
+  return (
+    !indirectNameSuffix.test(normalized) &&
+    ["password", "passwd", "secret"].some((fragment) => normalized.includes(fragment))
+  );
 }
 
 // Non-secret placeholders OpenClaw persists in apiKey fields
@@ -97,19 +115,23 @@ const nonSecretMarkerPrefixes = ["oauth:", "secretref-env:"];
 // is not an upper-case identifier ending in _KEY or _TOKEN.
 const envNameMarker = /^[A-Z][A-Z0-9_]*_(?:API_KEY|KEY|TOKEN)$/;
 
-function isNonSecretMarker(value: string): boolean {
+function isNonSecretMarker(value: string, name: string): boolean {
   const trimmed = value.trim();
   return (
     nonSecretMarkers.has(trimmed) ||
     nonSecretMarkerPrefixes.some((prefix) => trimmed.startsWith(prefix)) ||
-    envNameMarker.test(trimmed)
+    (normalizeName(name).endsWith("api-key") && envNameMarker.test(trimmed))
   );
 }
 
 // OpenClaw substitutes only upper-case names; "$${VAR}" is an escaped literal.
-const envReference = /(?<!\$)\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}/g;
+// The fallback is bounded so unterminated input cannot cause quadratic scans.
+const envReference = /(?<!\$)\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]{0,512}))?\}/g;
+// Scheme words that may precede a reference, as in "Bearer ${TOKEN}".
+const authScheme = /^(?:bearer|basic|token)$/i;
 
-function classifyValue(value: string, keyIsSecret: boolean): SecretFinding["kind"] | undefined {
+function classifyValue(value: string, name: string): SecretFinding["kind"] | undefined {
+  const keyIsSecret = isSecretLikeName(name);
   let hasReference = false;
   for (const [, variable, fallback] of value.matchAll(envReference)) {
     hasReference = true;
@@ -117,67 +139,110 @@ function classifyValue(value: string, keyIsSecret: boolean): SecretFinding["kind
       return "fallback";
     }
   }
-  if (!keyIsSecret || hasReference || value.trim().length === 0 || isNonSecretMarker(value)) {
+  if (!keyIsSecret || value.trim().length === 0 || isNonSecretMarker(value, name)) {
+    return undefined;
+  }
+  // A value made only of references (optionally after an auth scheme) holds no
+  // secret; any other literal text around a reference is still plaintext.
+  const literal = value.replace(envReference, "").trim();
+  if (hasReference && (literal.length === 0 || authScheme.test(literal))) {
     return undefined;
   }
   return "plaintext";
 }
 
 function sanitize(text: string): string {
-  const clean = text.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "");
+  const clean = text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
   return clean.length > maxKeyLength ? `${clean.slice(0, maxKeyLength - 1)}…` : clean;
 }
 
-function finding(kind: SecretFinding["kind"], file: string, key: string, line?: number): SecretFinding {
-  return line === undefined
-    ? { kind, file: sanitize(file), key: sanitize(key) }
-    : { kind, file: sanitize(file), line, key: sanitize(key) };
+// A path segment that looks like a credential (long, or a long run mixing
+// letters and digits) is replaced so a user-chosen map key cannot leak one.
+function isCredentialLikeSegment(segment: string): boolean {
+  if (segment.length >= 24) return true;
+  return (segment.match(/[A-Za-z0-9]{12,}/g) ?? []).some((run) => /[0-9]/.test(run) && /[A-Za-z]/.test(run));
 }
 
-const envAssignment = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/;
+function reportedKey(segments: string[]): string {
+  return segments.map((segment) => (isCredentialLikeSegment(segment) ? "<redacted>" : segment)).join(".");
+}
+
+function finding(kind: SecretFinding["kind"], file: string, segments: string[], line?: number): SecretFinding {
+  const key = sanitize(reportedKey(segments));
+  return line === undefined
+    ? { kind, file: sanitize(file), key }
+    : { kind, file: sanitize(file), line, key };
+}
+
+/**
+ * Port of dotenv 18.0.3's parse() (BSD-2-Clause, Copyright (c) 2015, Scott
+ * Motte), the parser OpenClaw uses for .env files, with line numbers added.
+ * Ported rather than imported so the scanner loads no child_process code; a
+ * test checks it against dotenv itself. Later assignments win, as in dotenv.
+ */
+const dotenvLine =
+  /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/gm;
+
+export function parseDotEnv(text: string): Map<string, { value: string; line: number }> {
+  const parsed = new Map<string, { value: string; line: number }>();
+  const lines = text.replace(/\r\n?/gm, "\n");
+  for (const match of lines.matchAll(dotenvLine)) {
+    const key = match[1]!;
+    let value = (match[2] ?? "").trim();
+    const quote = value[0];
+    value = value.replace(/^(['"`])([\s\S]*)\1$/gm, "$2");
+    if (quote === '"') {
+      value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+    }
+    const keyOffset = match.index! + match[0].indexOf(key);
+    const line = lines.slice(0, keyOffset).split("\n").length;
+    parsed.delete(key);
+    parsed.set(key, { value, line });
+  }
+  return parsed;
+}
 
 function scanEnvFile(file: string, text: string): SecretFinding[] {
   const findings: SecretFinding[] = [];
-  text.split(/\r?\n/).forEach((line, index) => {
-    const match = envAssignment.exec(line);
-    if (!match || !isSecretLikeName(match[1]!)) return;
-    let value = match[2]!.trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
+  for (const [key, { value, line }] of parseDotEnv(text)) {
+    if (isSecretLikeName(key) && value.trim().length > 0) {
+      findings.push(finding("plaintext", file, [key], line));
     }
-    if (value.trim().length > 0) {
-      findings.push(finding("plaintext", file, match[1]!, index + 1));
-    }
-  });
-  return findings;
+  }
+  return findings.sort((a, b) => a.line! - b.line!);
 }
 
-/** Walks every string in a parsed document; returns false if too deep to finish. */
-function walkStrings(
-  node: unknown,
-  pathSegments: string[],
-  visit: (value: string, segments: string[]) => void,
-): boolean {
-  if (pathSegments.length > maxDepth) return false;
-  if (typeof node === "string") {
-    visit(node, pathSegments);
+type Visit = (value: string | number, segments: string[], name: string) => void;
+
+/**
+ * Walks every string and number with its path and the name that governs it:
+ * the key itself, or for array items the nearest enclosing key. Returns false
+ * if the document is too deep to finish.
+ */
+function walkValues(node: unknown, segments: string[], name: string, visit: Visit): boolean {
+  if (segments.length > maxDepth) return false;
+  if (typeof node === "string" || typeof node === "number") {
+    visit(node, segments, name);
     return true;
   }
   if (Array.isArray(node)) {
-    return node.every((item, index) => walkStrings(item, [...pathSegments, String(index)], visit));
+    return node.every((item, index) => walkValues(item, [...segments, String(index)], name, visit));
   }
   if (node !== null && typeof node === "object") {
-    return Object.entries(node).every(([key, value]) => walkStrings(value, [...pathSegments, key], visit));
+    return Object.entries(node).every(([key, value]) => walkValues(value, [...segments, key], key, visit));
   }
   return true;
 }
 
 function scanConfig(file: string, parsed: unknown): SecretFinding[] | undefined {
   const findings: SecretFinding[] = [];
-  const complete = walkStrings(parsed, [], (value, segments) => {
-    const name = segments[segments.length - 1] ?? "";
-    const kind = classifyValue(value, isSecretLikeName(name));
-    if (kind) findings.push(finding(kind, file, segments.join(".")));
+  const complete = walkValues(parsed, [], "", (value, segments, name) => {
+    if (typeof value === "number") {
+      if (isNumericSecretName(name)) findings.push(finding("plaintext", file, segments));
+      return;
+    }
+    const kind = classifyValue(value, name);
+    if (kind) findings.push(finding(kind, file, segments));
   });
   return complete ? findings : undefined;
 }
@@ -189,18 +254,13 @@ function scanModelsJson(file: string, parsed: unknown): SecretFinding[] {
   for (const [providerId, provider] of Object.entries(providers)) {
     if (provider === null || typeof provider !== "object") continue;
     const { apiKey, headers } = provider as { apiKey?: unknown; headers?: unknown };
-    if (typeof apiKey === "string" && apiKey.trim().length > 0 && !isNonSecretMarker(apiKey)) {
-      findings.push(finding("plaintext", file, `providers.${providerId}.apiKey`));
+    if (typeof apiKey === "string" && classifyValue(apiKey, "apiKey") !== undefined) {
+      findings.push(finding("plaintext", file, ["providers", providerId, "apiKey"]));
     }
     if (headers === null || typeof headers !== "object") continue;
     for (const [header, value] of Object.entries(headers)) {
-      if (
-        typeof value === "string" &&
-        value.trim().length > 0 &&
-        isSecretLikeName(header) &&
-        !isNonSecretMarker(value)
-      ) {
-        findings.push(finding("plaintext", file, `providers.${providerId}.headers.${header}`));
+      if (typeof value === "string" && classifyValue(value, header) !== undefined) {
+        findings.push(finding("plaintext", file, ["providers", providerId, "headers", header]));
       }
     }
   }
@@ -302,7 +362,11 @@ export const nodeSecretFileReader: SecretFileReader = {
   readText(file) {
     let fd: number | undefined;
     try {
-      fd = openSync(file, "r");
+      // stat first: opening a FIFO for reading would block until a writer appears.
+      const before = statSync(file);
+      if (!before.isFile() || before.size > maxFileBytes) return { status: "unreadable" };
+      const nonBlocking = (constants as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
+      fd = openSync(file, constants.O_RDONLY | nonBlocking);
       const stats = fstatSync(fd);
       if (!stats.isFile() || stats.size > maxFileBytes) return { status: "unreadable" };
       return { status: "ok", text: readFileSync(fd, "utf8") };
