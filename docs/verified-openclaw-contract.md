@@ -67,7 +67,9 @@ Sources:
   so no prerelease name can collide with the ordering markers. Two bounds stay conservative: `<=X` also covers `X`'s
   hotfixes (the advisory does not say a hotfix carried the fix), and a `-0`
   bound keeps SemVer's meaning of every prerelease of `X` (no `X-0` hotfix has
-  been published). Against every published version this drops only matches
+  been published). An installed `-0` version (clawdbot's `v2026.1.24` tag
+  carries `2026.1.24-0`) is graded as both `X`'s lowest prerelease and `X`.
+  Against every published version this drops only matches
   where a hotfix follows the release that fixed the issue, and no grade falls.
 - Only plain comparator sets (for example `>=2026.1.5 <=2026.5.3-1`) are
   supported. Hyphen ranges, `||`, `^`, `~`, and x-ranges would be expanded by

@@ -97,7 +97,7 @@ export function assessOpenClawVersion(
   const ordered = toReleaseOrder(version);
   // Mapping lengthens the version; past semver's limits every satisfies() call
   // would return false and silently pass, so refuse to grade instead.
-  if (semver.valid(ordered) === null) {
+  if (ordered.some((candidate) => semver.valid(candidate) === null)) {
     return {
       grade: "unknown",
       version,
@@ -106,9 +106,11 @@ export function assessOpenClawVersion(
     };
   }
   const matched = advisories.filter((advisory) =>
-    semver.satisfies(ordered, rangeInReleaseOrder(advisory.vulnerableVersions), {
-      includePrerelease: true,
-    }),
+    ordered.some((candidate) =>
+      semver.satisfies(candidate, rangeInReleaseOrder(advisory.vulnerableVersions), {
+        includePrerelease: true,
+      }),
+    ),
   );
   if (matched.length === 0) {
     return {
@@ -153,15 +155,24 @@ export function assessOpenClawVersion(
  * so no input tag (even one named "zzz") can collide with the markers.
  */
 const numericHotfix = /^\d+$/;
-const versionToken = /(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?/g;
 
-function toReleaseOrder(version: string): string {
-  return version.replace(versionToken, (_match, core: string, prerelease?: string) => {
-    if (prerelease === undefined) {
-      return `${core}-zz`;
-    }
-    return numericHotfix.test(prerelease) ? `${core}-zzhotfix.${prerelease}` : `${core}-pre.${prerelease}`;
-  });
+/**
+ * Returns the release-order position(s) to grade. A "-0" version is ambiguous:
+ * SemVer reads it as X's lowest prerelease, but clawdbot's v2026.1.24 tag
+ * carries package version 2026.1.24-0 for the release itself, so it is graded
+ * as both and the union of matches is reported.
+ */
+function toReleaseOrder(version: string): string[] {
+  const [, core, prerelease] = /^(\d+\.\d+\.\d+)(?:-(.+))?$/.exec(version) ?? [];
+  if (prerelease === undefined) {
+    return [`${core}-zz`];
+  }
+  if (prerelease === "0") {
+    return [`${core}-0`, `${core}-zz`];
+  }
+  return [
+    numericHotfix.test(prerelease) ? `${core}-zzhotfix.${prerelease}` : `${core}-pre.${prerelease}`,
+  ];
 }
 
 /**
