@@ -123,9 +123,12 @@ scanner reads, never writes:
 
 - `.env` files: `<stateDir>/.env`, `<configDir>/.env`, and
   `~/.config/openclaw/gateway.env` (`src/secrets/storage-scan.ts`,
-  `src/infra/dotenv-global-core.ts`). Lines of the form
-  `[export ]KEY=value` with a secret-like `KEY` and a non-empty value
-  (after removing matching quotes) are reported as `file:line KEY`.
+  `src/infra/dotenv-global-core.ts`). OpenClaw parses them with `dotenv`
+  `parse()`; the scanner uses a port of that function (dotenv 18.0.3,
+  BSD-2-Clause) so it loads no `child_process` code, and a test checks the
+  port against `dotenv` itself. That covers multiline quoted values, CR line
+  endings, `KEY: value`, and dotted or dashed keys. A secret-like `KEY` with a
+  non-empty value is reported as `file:line KEY`; the last assignment wins.
 - `openclaw.json` (JSON5): any string under a secret-like key that is a
   literal, not a `${VAR}` reference or SecretRef object, is reported by dotted
   path. This covers `env.vars.*` and `env.*`
@@ -139,14 +142,30 @@ scanner reads, never writes:
   is sensitive (`src/secrets/model-provider-header-policy.ts`).
 - Secret-like names use OpenClaw's own conservative fragments (`api-key`,
   `apikey`, `token`, `secret`, `password`, `credential`, plus
-  `authorization`); names ending in `file`, `path`, `env`, `ref`, `url`, or
-  `uri` point elsewhere and are skipped.
-- Files over 1 MiB, unreadable files, and unparseable JSON are reported as
-  `unknown` by path only; parser messages, which can quote file bytes, are
-  never surfaced. Findings never include values, fragments, lengths, or hashes.
+  `authorization`), after camelCase and `_`/`.` are normalized to dashes, so
+  `privateKey`, `accessKey`, and `apiKeys` match. Array items take the name of
+  the enclosing key. Names ending in `file`, `path`, `env`, `ref`, `url`, or
+  `uri` point elsewhere and are skipped. Numbers are reported only under
+  `password` or `secret` names, never counts such as `maxTokens`.
+- A value is exempt only when it is made entirely of references (optionally
+  after `Bearer`, `Basic`, or `Token`); literal text beside a reference is
+  still plaintext. Upper-case env-var-name markers such as `OPENAI_API_KEY`
+  are exempt only in `apiKey` fields.
+- A path segment that looks like a credential (24 or more characters, or a run
+  of 12 or more letters and digits mixing both) is reported as `<redacted>`,
+  so a user-chosen map key cannot carry a secret into a report.
+- Files over 1 MiB, non-regular files (a FIFO is never opened, so it cannot
+  block), unreadable files, and unparseable JSON are reported as `unknown` by
+  path only; parser messages, which can quote file bytes, are never surfaced.
+  Findings never include values, fragments, lengths, or hashes.
 - Not scanned in v0.1: auth-profile SQLite stores, the live process or service
-  environment, and archived legacy auth files. A key name or path segment that
-  is itself a secret would be reported as a name.
+  environment, and archived legacy auth files. Known limits: a secret in a
+  duplicate JSON5 key that a later key overrides, or inside a comment, is not
+  seen (JSON5 keeps the last value); a secret nested in an object under a
+  secret name (`token: { value: … }`), a literal under an indirect name such
+  as `tokenEnv`, and secret-bearing URLs such as webhook URLs are not reported;
+  `apiKey` values starting with `oauth:` are treated as OpenClaw's OAuth
+  marker.
 
 Sources:
 

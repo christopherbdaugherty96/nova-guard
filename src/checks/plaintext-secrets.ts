@@ -186,6 +186,9 @@ const dotenvLine =
 export function parseDotEnv(text: string): Map<string, { value: string; line: number }> {
   const parsed = new Map<string, { value: string; line: number }>();
   const lines = text.replace(/\r\n?/gm, "\n");
+  // Count newlines incrementally so line numbers stay linear in file size.
+  let counted = 0;
+  let line = 1;
   for (const match of lines.matchAll(dotenvLine)) {
     const key = match[1]!;
     let value = (match[2] ?? "").trim();
@@ -195,7 +198,9 @@ export function parseDotEnv(text: string): Map<string, { value: string; line: nu
       value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
     }
     const keyOffset = match.index! + match[0].indexOf(key);
-    const line = lines.slice(0, keyOffset).split("\n").length;
+    for (; counted < keyOffset; counted += 1) {
+      if (lines.charCodeAt(counted) === 10) line += 1;
+    }
     parsed.delete(key);
     parsed.set(key, { value, line });
   }
