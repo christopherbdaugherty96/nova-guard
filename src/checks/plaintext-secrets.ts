@@ -88,12 +88,16 @@ export function isSecretLikeName(name: string): boolean {
   return secretNameFragments.some((fragment) => normalized.includes(fragment));
 }
 
-/** Numbers are checked only under names that hold a secret, never counts like maxTokens. */
+/**
+ * Numbers are checked only under names that hold a credential (a password,
+ * secret, token, key, or PIN), never counts such as maxTokens or tokenLimit.
+ */
 function isNumericSecretName(name: string): boolean {
   const normalized = normalizeName(name);
   return (
     !indirectNameSuffix.test(normalized) &&
-    ["password", "passwd", "secret"].some((fragment) => normalized.includes(fragment))
+    (/(?:^|-)(?:token|key|api-key|apikey|pin)$/.test(normalized) ||
+      ["password", "passwd", "secret"].some((fragment) => normalized.includes(fragment)))
   );
 }
 
@@ -115,12 +119,19 @@ const nonSecretMarkerPrefixes = ["oauth:", "secretref-env:"];
 // is not an upper-case identifier ending in _KEY or _TOKEN.
 const envNameMarker = /^[A-Z][A-Z0-9_]*_(?:API_KEY|KEY|TOKEN)$/;
 
+/**
+ * OpenClaw's apiKey placeholders exempt only apiKey fields. SecretRef markers
+ * ("secretref-managed", "secretref-env:NAME") name where a secret is held and
+ * are exempt anywhere.
+ */
 function isNonSecretMarker(value: string, name: string): boolean {
   const trimmed = value.trim();
+  if (trimmed === "secretref-managed" || trimmed.startsWith("secretref-env:")) return true;
+  if (!normalizeName(name).endsWith("api-key")) return false;
   return (
     nonSecretMarkers.has(trimmed) ||
     nonSecretMarkerPrefixes.some((prefix) => trimmed.startsWith(prefix)) ||
-    (normalizeName(name).endsWith("api-key") && envNameMarker.test(trimmed))
+    envNameMarker.test(trimmed)
   );
 }
 
@@ -144,7 +155,7 @@ function classifyValue(value: string, name: string): SecretFinding["kind"] | und
   }
   // A value made only of references (optionally after an auth scheme) holds no
   // secret; any other literal text around a reference is still plaintext.
-  const literal = value.replace(envReference, "").trim();
+  const literal = value.replace(envReference, "").replace(/[\s:]+/g, " ").trim();
   if (hasReference && (literal.length === 0 || authScheme.test(literal))) {
     return undefined;
   }
@@ -156,15 +167,29 @@ function sanitize(text: string): string {
   return clean.length > maxKeyLength ? `${clean.slice(0, maxKeyLength - 1)}…` : clean;
 }
 
-// A path segment that looks like a credential (long, or a long run mixing
-// letters and digits) is replaced so a user-chosen map key cannot leak one.
-function isCredentialLikeSegment(segment: string): boolean {
-  if (segment.length >= 24) return true;
-  return (segment.match(/[A-Za-z0-9]{12,}/g) ?? []).some((run) => /[0-9]/.test(run) && /[A-Za-z]/.test(run));
+// Inner path segments can be user-chosen map keys, so they are shown only when
+// they are lowercase or camelCase words joined by "-" or "_" (the shape of
+// OpenClaw's schema keys and provider ids) or array indexes. The leaf is the
+// field name; it is shown unless it looks like a credential.
+const word = "[a-z]+(?:[A-Z][a-z]+)*";
+const plainWordSegment = new RegExp(`^${word}(?:[-_]${word})*$`);
+
+function isCredentialLike(name: string): boolean {
+  return (
+    name.length > 64 ||
+    (name.match(/[A-Za-z0-9]{12,}/g) ?? []).some((run) => /[0-9]/.test(run) && /[A-Za-z]/.test(run))
+  );
 }
 
 function reportedKey(segments: string[]): string {
-  return segments.map((segment) => (isCredentialLikeSegment(segment) ? "<redacted>" : segment)).join(".");
+  return segments
+    .map((segment, index) => {
+      if (index === segments.length - 1) return isCredentialLike(segment) ? "<redacted>" : segment;
+      return /^\d+$/.test(segment) || (plainWordSegment.test(segment) && segment.length <= 32)
+        ? segment
+        : "<redacted>";
+    })
+    .join(".");
 }
 
 function finding(kind: SecretFinding["kind"], file: string, segments: string[], line?: number): SecretFinding {
@@ -183,8 +208,9 @@ function finding(kind: SecretFinding["kind"], file: string, segments: string[], 
 const dotenvLine =
   /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/gm;
 
-export function parseDotEnv(text: string): Map<string, { value: string; line: number }> {
-  const parsed = new Map<string, { value: string; line: number }>();
+/** Every assignment in file order, including ones a later line overrides. */
+export function parseDotEnvAssignments(text: string): { key: string; value: string; line: number }[] {
+  const assignments: { key: string; value: string; line: number }[] = [];
   const lines = text.replace(/\r\n?/gm, "\n");
   // Count newlines incrementally so line numbers stay linear in file size.
   let counted = 0;
@@ -201,20 +227,26 @@ export function parseDotEnv(text: string): Map<string, { value: string; line: nu
     for (; counted < keyOffset; counted += 1) {
       if (lines.charCodeAt(counted) === 10) line += 1;
     }
+    assignments.push({ key, value, line });
+  }
+  return assignments;
+}
+
+/** dotenv's resulting map: the last assignment of each key wins. */
+export function parseDotEnv(text: string): Map<string, { value: string; line: number }> {
+  const parsed = new Map<string, { value: string; line: number }>();
+  for (const { key, value, line } of parseDotEnvAssignments(text)) {
     parsed.delete(key);
     parsed.set(key, { value, line });
   }
   return parsed;
 }
 
+// An overridden assignment is still a secret on disk, so every one is checked.
 function scanEnvFile(file: string, text: string): SecretFinding[] {
-  const findings: SecretFinding[] = [];
-  for (const [key, { value, line }] of parseDotEnv(text)) {
-    if (isSecretLikeName(key) && value.trim().length > 0) {
-      findings.push(finding("plaintext", file, [key], line));
-    }
-  }
-  return findings.sort((a, b) => a.line! - b.line!);
+  return parseDotEnvAssignments(text)
+    .filter(({ key, value }) => isSecretLikeName(key) && value.trim().length > 0)
+    .map(({ key, line }) => finding("plaintext", file, [key], line));
 }
 
 type Visit = (value: string | number, segments: string[], name: string) => void;

@@ -145,15 +145,24 @@ scanner reads, never writes:
   `authorization`), after camelCase and `_`/`.` are normalized to dashes, so
   `privateKey`, `accessKey`, and `apiKeys` match. Array items take the name of
   the enclosing key. Names ending in `file`, `path`, `env`, `ref`, `url`, or
-  `uri` point elsewhere and are skipped. Numbers are reported only under
-  `password` or `secret` names, never counts such as `maxTokens`.
+  `uri` point elsewhere and are skipped. Counts such as `maxTokens` are not
+  credentials.
 - A value is exempt only when it is made entirely of references (optionally
   after `Bearer`, `Basic`, or `Token`); literal text beside a reference is
   still plaintext. Upper-case env-var-name markers such as `OPENAI_API_KEY`
   are exempt only in `apiKey` fields.
-- A path segment that looks like a credential (24 or more characters, or a run
-  of 12 or more letters and digits mixing both) is reported as `<redacted>`,
-  so a user-chosen map key cannot carry a secret into a report.
+- Inner path segments can be user-chosen map keys, so they are reported only
+  when they are lowercase or camelCase words joined by `-` or `_` (the shape of
+  OpenClaw's schema keys and provider ids) or array indexes; anything else is
+  `<redacted>`. The final field name is reported unless it looks like a
+  credential (over 64 characters, or a 12-character run mixing letters and
+  digits). Residual limit: a map key that is itself a lowercase-letters-only
+  secret would still be shown.
+- Every `.env` assignment with a value is reported, including one a later
+  line overrides, because the earlier secret is still on disk. OpenClaw's
+  `apiKey` placeholders exempt only `apiKey` fields; SecretRef markers
+  (`secretref-managed`, `secretref-env:NAME`) are exempt anywhere. Numbers are
+  reported under password, secret, token, key, and PIN names.
 - Files over 1 MiB, non-regular files (a FIFO is never opened, so it cannot
   block), unreadable files, and unparseable JSON are reported as `unknown` by
   path only; parser messages, which can quote file bytes, are never surfaced.
@@ -161,11 +170,11 @@ scanner reads, never writes:
 - Not scanned in v0.1: auth-profile SQLite stores, the live process or service
   environment, and archived legacy auth files. Known limits: a secret in a
   duplicate JSON5 key that a later key overrides, or inside a comment, is not
-  seen (JSON5 keeps the last value); a secret nested in an object under a
-  secret name (`token: { value: … }`), a literal under an indirect name such
-  as `tokenEnv`, and secret-bearing URLs such as webhook URLs are not reported;
-  `apiKey` values starting with `oauth:` are treated as OpenClaw's OAuth
-  marker.
+  seen (JSON5 keeps the last value; `.env` duplicates are all reported); a
+  secret nested in an object under a secret name (`token: { value: … }`), a
+  literal under an indirect name such as `tokenEnv`, and secret-bearing URLs
+  such as webhook URLs are not reported; `apiKey` values starting with
+  `oauth:` are treated as OpenClaw's OAuth marker.
 
 Sources:
 
