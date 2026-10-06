@@ -566,3 +566,28 @@ test("discovery across all roots is bounded and the remainder is unknown", () =>
     assert.ok(result.unknown.some((entry) => entry.reason === "discovery-truncated"));
   });
 });
+
+test("symlink resolution during discovery is bounded and the remainder is unknown", posixOnly, () => {
+  fixture((root, at) => {
+    const target = path.join(at.stateDir, "skills", "real");
+    mkdirSync(target, { recursive: true });
+    for (let i = 0; i < 10; i += 1) symlinkSync(target, path.join(at.stateDir, "skills", `l${i}`));
+    let resolutions = 0;
+    const counting: SkillFs = {
+      ...nodeSkillFs,
+      realpath(file) {
+        if (path.basename(file).startsWith("l")) resolutions += 1;
+        return nodeSkillFs.realpath(file);
+      },
+    };
+    const result = assessRiskySkills(at, none, counting, { maxSymlinkResolutions: 5 });
+    assert.ok(resolutions <= 5, `resolutions: ${resolutions}`);
+    assert.equal(result.grade, "unknown");
+    assert.deepEqual(result.unknown, [{ path: path.join(at.stateDir, "skills"), reason: "discovery-truncated" }]);
+    void root;
+  });
+});
+
+test("the real path resolver is the single-syscall native one", () => {
+  assert.equal(nodeSkillFs.realpath.toString().includes("native"), true);
+});
