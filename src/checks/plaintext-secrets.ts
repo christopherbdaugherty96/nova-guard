@@ -377,13 +377,17 @@ interface IncludeSite {
   name: string;
 }
 
-/** Every "$include" in a document, in order, with where it is included. */
+/**
+ * Every "$include" in a document, in order, with where it is included. A value
+ * that is not a string or an array of strings makes OpenClaw reject the
+ * config, so it is recorded as invalid.
+ */
 function listIncludes(
   node: unknown,
   segments: PathSegment[] = [],
   name = "",
-  found: IncludeSite[] = [],
-): IncludeSite[] {
+  found: { sites: IncludeSite[]; invalid: boolean } = { sites: [], invalid: false },
+): { sites: IncludeSite[]; invalid: boolean } {
   if (segments.length > maxDepth || node === null || typeof node !== "object") return found;
   if (Array.isArray(node)) {
     node.forEach((item, index) => listIncludes(item, [...segments, index], name, found));
@@ -391,8 +395,10 @@ function listIncludes(
   }
   for (const [key, value] of Object.entries(node)) {
     if (key === includeKey) {
-      for (const item of Array.isArray(value) ? value : [value]) {
-        if (typeof item === "string") found.push({ target: item, segments, name });
+      const items = Array.isArray(value) ? value : [value];
+      for (const item of items) {
+        if (typeof item === "string") found.sites.push({ target: item, segments, name });
+        else found.invalid = true;
       }
     } else {
       listIncludes(value, [...segments, key], key, found);
@@ -438,20 +444,21 @@ export function assessPlaintextSecrets(
   const scanned: string[] = [];
 
   // A required file (an $include target) that is missing cannot be ruled out.
+  // Returns the file's findings, or undefined if it was missing or unreadable.
   const read = (
     file: string,
     scan: (text: string) => SecretFinding[] | undefined,
     required = false,
-  ) => {
+  ): SecretFinding[] | undefined => {
     const result = reader.readText(file);
-    if (result.status === "missing" && !required) return;
+    if (result.status === "missing" && !required) return undefined;
     const found = result.status === "ok" ? scan(result.text) : undefined;
     if (found === undefined) {
       unreadable.push(sanitize(file));
-      return;
+      return undefined;
     }
     scanned.push(sanitize(file));
-    findings.push(...found);
+    return found;
   };
   const parse = (text: string): unknown => {
     try {
@@ -467,63 +474,74 @@ export function assessPlaintextSecrets(
     path.join(path.dirname(locations.configPath), ".env"),
     path.join(locations.homeDir, ".config", "openclaw", "gateway.env"),
   ]);
-  for (const file of envFiles) read(file, (text) => scanEnvFile(file, text));
+  for (const file of envFiles) findings.push(...(read(file, (text) => scanEnvFile(file, text)) ?? []));
 
   // OpenClaw's $include rules (src/config/includes.ts): paths resolve against
   // the including file, must stay inside the config directory or an
-  // OPENCLAW_INCLUDE_ROOTS root (others are refused, so never read), and nest
-  // at most ten deep. Each file is scanned once, so cycles terminate.
+  // OPENCLAW_INCLUDE_ROOTS root, and nest at most ten deep. Anything OpenClaw
+  // would refuse (outside the roots, too deep, malformed) makes it reject the
+  // config, so it is graded unknown rather than skipped.
   const includeRoots = [path.dirname(locations.configPath), ...(locations.includeRoots ?? [])].map(
     (root) => path.resolve(root),
   );
   const insideIncludeRoot = (file: string) =>
     includeRoots.some((root) => {
       const relative = path.relative(root, file);
-      return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+      return (
+        relative !== "" &&
+        relative !== ".." &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative)
+      );
     });
-  // A file is rescanned when a shallower include reaches it, so coverage does
-  // not depend on traversal order; deeper or equal revisits (cycles) stop.
+  // Each visit is one file read in one include context (logical path and
+  // governing key), so a file included at two sites is checked under each.
+  // A visit is redone when a shallower include reaches it, replacing its
+  // earlier findings, so coverage does not depend on traversal order; equal
+  // or deeper revisits stop, so cycles end.
   const shallowestDepth = new Map<string, number>();
+  const configFindings = new Map<string, SecretFinding[]>();
+  const reachedFiles = new Set<string>();
   const tooDeep: string[] = [];
+  const refused: string[] = [];
   const scanConfigFile = (file: string, depth: number, prefix: PathSegment[], name: string) => {
-    const key = path.resolve(file);
-    const previous = shallowestDepth.get(key);
+    const visit = `${path.resolve(file)}\u0000${name}\u0000${JSON.stringify(prefix)}`;
+    const previous = shallowestDepth.get(visit);
     if (previous !== undefined && previous <= depth) return;
-    shallowestDepth.set(key, depth);
-    if (previous !== undefined) {
-      // The shallower scan replaces the earlier one's results for this file.
-      const reported = sanitize(file);
-      for (let index = findings.length - 1; index >= 0; index -= 1) {
-        if (findings[index]!.file === reported) findings.splice(index, 1);
-      }
-    }
+    shallowestDepth.set(visit, depth);
+    reachedFiles.add(path.resolve(file));
     const includes: IncludeSite[] = [];
-    read(
+    const found = read(
       file,
       (text) => {
         const parsed = parse(text);
         if (parsed === undefined) return undefined;
-        for (const site of listIncludes(parsed)) {
+        const { sites, invalid } = listIncludes(parsed);
+        // The file's own findings still count; what it cannot include is unknown.
+        if (invalid) refused.push(sanitize(file));
+        for (const site of sites) {
           const target = path.isAbsolute(site.target)
             ? path.normalize(site.target)
             : path.resolve(path.dirname(file), site.target);
-          if (insideIncludeRoot(target)) {
-            // Included content sits at the site's logical path, under its key.
-            includes.push({
-              target,
-              segments: [...prefix, ...site.segments],
-              name: site.segments.length > 0 ? site.name : name,
-            });
+          if (!insideIncludeRoot(target)) {
+            refused.push(sanitize(target));
+            continue;
           }
+          // Included content sits at the site's logical path, under its key.
+          includes.push({
+            target,
+            segments: [...prefix, ...site.segments],
+            name: site.segments.length > 0 ? site.name : name,
+          });
         }
         return scanConfig(file, parsed, prefix, name);
       },
       depth > 0,
     );
+    configFindings.set(visit, found ?? []);
     for (const site of includes) {
       if (depth + 1 > maxIncludeDepth) {
-        // OpenClaw rejects deeper nesting; unless another route reaches it,
-        // the file cannot be ruled out.
+        // Unless another route reaches it, the file cannot be ruled out.
         tooDeep.push(site.target);
         continue;
       }
@@ -532,8 +550,10 @@ export function assessPlaintextSecrets(
   };
   scanConfigFile(locations.configPath, 0, [], "");
   for (const target of tooDeep) {
-    if (!shallowestDepth.has(path.resolve(target))) unreadable.push(sanitize(target));
+    if (!reachedFiles.has(path.resolve(target))) unreadable.push(sanitize(target));
   }
+  unreadable.push(...refused);
+  for (const found of configFindings.values()) findings.push(...found);
 
   const agentsRoot = path.join(locations.stateDir, "agents");
   const agents = reader.listDirectories(agentsRoot);
@@ -546,10 +566,11 @@ export function assessPlaintextSecrets(
     ),
   ]);
   for (const file of modelsFiles) {
-    read(file, (text) => {
+    const found = read(file, (text) => {
       const parsed = parse(text);
       return parsed === undefined ? undefined : scanModelsJson(file, parsed);
     });
+    findings.push(...(found ?? []));
   }
 
   // A rescanned include file is listed once.

@@ -140,16 +140,18 @@ scanner reads, never writes:
   config document) are scanned the same way, following OpenClaw's rules
   (`src/config/includes.ts`, `src/config/includes-scan.ts`): paths resolve
   against the including file, must stay inside the config directory or an
-  `OPENCLAW_INCLUDE_ROOTS` root (others are refused by OpenClaw and are never
-  read), and nest at most 10 deep. Included content sits at its include site,
-  so it inherits that site's logical path and governing key (an included bare
-  string under `token` is a token), and findings show the logical path. A file
-  is rescanned only when a shallower include reaches it, so cycles end and
-  coverage does not depend on traversal order. A missing, unreadable,
-  unparseable, or too-deep include (one no shallower route reaches) is
-  `unknown`. The
-  check is lexical; OpenClaw's extra symlink-realpath check is not repeated,
-  so an in-root symlink may be scanned even if OpenClaw would refuse it.
+  `OPENCLAW_INCLUDE_ROOTS` root, and nest at most 10 deep. Included content
+  sits at its include site, so it inherits that site's logical path and
+  governing key (an included bare string under `token` is a token); findings
+  name the included file and the logical path. A file included at two sites
+  is checked under each. A visit is redone only when a shallower include
+  reaches it, so cycles end and coverage does not depend on traversal order.
+  Anything OpenClaw would refuse or cannot load (an include outside the roots,
+  a malformed `$include` value, a missing, unreadable, unparseable, or
+  too-deep target) makes the result `unknown`; refused targets are never read.
+  The containment check is lexical; OpenClaw's extra symlink-realpath check is
+  not repeated, so an in-root symlink may be scanned even if OpenClaw would
+  refuse it. Include file paths are reported as locations.
 - `<stateDir>/agents/*/agent/models.json` (always including `main`):
   `providers.*.apiKey` unless it is one of OpenClaw's non-secret markers
   (`src/agents/model-auth-markers.ts`), and `providers.*.headers.*` whose name
