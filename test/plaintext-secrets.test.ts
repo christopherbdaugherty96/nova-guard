@@ -594,6 +594,28 @@ test("a credential-like .env variable name is replaced with *", () => {
   assertNoLeak(result, [...SECRETS, "abc123def456ghi"]);
 });
 
+test("a digit-only map key is a user key, not an array index", () => {
+  const config = JSON.stringify({
+    gateway: { tokens: { "1234567890": { token: SECRET_A } } },
+    models: { providers: { o: { apiKeys: [SECRET_B] } } },
+  });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [
+    `plaintext ${configPath} gateway.tokens.*.token`,
+    `plaintext ${configPath} models.providers.*.apiKeys.0`,
+  ]);
+  assert.ok(!JSON.stringify(result).includes("1234567890"));
+  assertNoLeak(result);
+});
+
+test("a long environment-variable name in a fallback is still parsed", () => {
+  const longName = `${"A".repeat(300)}_API_KEY`;
+  const config = JSON.stringify({ tools: { search: { endpoint: `\${${longName}:-${SECRET_A}}` } } });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [`fallback ${configPath} tools.search.endpoint`]);
+  assertNoLeak(result);
+});
+
 test("crafted unterminated references are handled in linear time", () => {
   const config = JSON.stringify({ p: { apiKey: "${A:-".repeat(40_000) } });
   const started = performance.now();
