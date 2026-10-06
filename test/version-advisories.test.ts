@@ -202,6 +202,24 @@ test("any prerelease tag sorts before its release, whatever its name", () => {
   }
 });
 
+test("a -0 version is graded as both its lowest prerelease and its release", () => {
+  // clawdbot's v2026.1.24 tag carries package version 2026.1.24-0.
+  for (const vulnerableVersions of ["<2026.1.24", ">=2026.1.24 <2026.1.26"]) {
+    const result = assessWithBundle(
+      "2026.1.24-0",
+      [{ ...fixture[0], vulnerableVersions }],
+      "2026-10-06",
+    );
+    assert.equal(result.grade, "critical", vulnerableVersions);
+  }
+  const later = assessWithBundle(
+    "2026.1.24-0",
+    [{ ...fixture[0], vulnerableVersions: ">=2026.1.24-1" }],
+    "2026-10-06",
+  );
+  assert.equal(later.grade, "pass");
+});
+
 test("ANSI and other terminal escapes do not hide the version", () => {
   for (const input of ["\x1b[32m2026.1.28\x1b[0m", "\x1b[2KOpenClaw 2026.1.28"]) {
     const result = assessOpenClawVersion(input);
