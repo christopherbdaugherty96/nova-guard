@@ -15,7 +15,9 @@ import {
   type SecretFileReader,
 } from "../src/checks/plaintext-secrets.js";
 
-const home = path.join(path.sep, "home", "chris");
+// Resolved, so fixture keys match the scanner's resolved paths on every OS
+// (on Windows this is C:\home\chris, not a drive-less \home\chris).
+const home = path.resolve(path.sep, "home", "chris");
 const stateDir = path.join(home, ".openclaw");
 const configPath = path.join(stateDir, "openclaw.json");
 const stateEnv = path.join(stateDir, ".env");
@@ -451,7 +453,7 @@ test("config files referenced by $include are scanned with OpenClaw's rules", ()
   const result = assessPlaintextSecrets(
     locations,
     fakeReader({
-      [configPath]: `{ gateway: { $include: "./gateway.json5" }, channels: { $include: ["parts/discord.json5", "${slackFile}"] } }`,
+      [configPath]: `{ gateway: { $include: "./gateway.json5" }, channels: { $include: ["parts/discord.json5", ${JSON.stringify(slackFile)}] } }`,
       [gatewayFile]: `{ auth: { mode: "token", token: "${SECRET_A}" } }`,
       // Nested includes resolve relative to the including file.
       [discordFile]: `{ discord: { token: "${SECRET_B}" }, $include: "./slack.json5" }`,
@@ -475,7 +477,7 @@ test("$include cycles terminate and paths outside the config roots are not read"
   const shared = path.join(sharedRoot, "keys.json5");
   const requested: string[] = [];
   const base = fakeReader({
-    [configPath]: `{ $include: ["./a.json5", "../outside.json5", "${shared}"] }`,
+    [configPath]: `{ $include: ["./a.json5", "../outside.json5", ${JSON.stringify(shared)}] }`,
     [a]: `{ $include: "./b.json5" }`,
     [b]: `{ $include: "./a.json5", x: { token: "${SECRET_A}" } }`,
     [outside]: `{ token: "${SECRET_B}" }`,
@@ -534,7 +536,7 @@ test("a file reached first too deep is rescanned when a shallower include reache
 });
 
 test("a rescan never drops another file's findings, even under very long paths", () => {
-  const longDir = path.join(path.sep, "s".repeat(120), "t".repeat(120));
+  const longDir = path.resolve(path.sep, "s".repeat(120), "t".repeat(120));
   const longLocations = { stateDir: longDir, configPath: path.join(longDir, "openclaw.json"), homeDir: home };
   const result = assessPlaintextSecrets(
     longLocations,
@@ -551,7 +553,8 @@ test("a rescan never drops another file's findings, even under very long paths",
 });
 
 test("includes OpenClaw would refuse or cannot parse make the result unknown", () => {
-  for (const include of [`"/etc/x.json5"`, `"../outside.json5"`, `[["a.json5"]]`, `{ path: "a.json5" }`, `42`]) {
+  const outsideRoot = JSON.stringify(path.resolve(path.sep, "etc", "x.json5"));
+  for (const include of [outsideRoot, `"../outside.json5"`, `[["a.json5"]]`, `{ path: "a.json5" }`, `42`]) {
     const result = assessPlaintextSecrets(
       locations,
       fakeReader({ [configPath]: `{ gateway: { $include: ${include} } }` }),
