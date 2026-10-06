@@ -334,6 +334,83 @@ test("a path segment that looks like a credential is redacted, not reported", ()
   assertNoLeak(result, [...SECRETS, keyLike]);
 });
 
+test("user-chosen map keys never reach a report unless they are plain words", () => {
+  const keysThatAreSecrets = [
+    "hunter2",
+    "Tr0ub4dor&3",
+    "abcdefgh1jk-abcdefgh1jk",
+    "ghp_abc1-def2-ghi3-jkl4",
+    "xoxb-1234-5678-abcdEFGH",
+    "sk-REALSECRETVALUE",
+    "pa55w0rd!",
+  ];
+  for (const mapKey of keysThatAreSecrets) {
+    const config = JSON.stringify({ gateway: { tokens: { [mapKey]: { token: SECRET_A } } } });
+    const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+    assert.deepEqual(keys(result), [`plaintext ${configPath} gateway.tokens.<redacted>.token`], mapKey);
+    assert.ok(!JSON.stringify(result).includes(mapKey), mapKey);
+  }
+  const named = JSON.stringify({ models: { providers: { "openai-codex": { apiKey: SECRET_B } } } });
+  assert.deepEqual(keys(assessPlaintextSecrets(locations, fakeReader({ [configPath]: named }))), [
+    `plaintext ${configPath} models.providers.openai-codex.apiKey`,
+  ]);
+});
+
+test("long descriptive names are reported in full", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [stateEnv]: `ANTHROPIC_OAUTH_REFRESH_TOKEN=${SECRET_A}`,
+      [configPath]: JSON.stringify({ a: { anthropicOauthRefreshToken: SECRET_B } }),
+    }),
+  );
+  assert.deepEqual(keys(result), [
+    `plaintext ${stateEnv}:1 ANTHROPIC_OAUTH_REFRESH_TOKEN`,
+    `plaintext ${configPath} a.anthropicOauthRefreshToken`,
+  ]);
+});
+
+test("an earlier .env secret is reported even when a later line overrides it", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({ [stateEnv]: `OPENAI_API_KEY=${SECRET_A}\nOPENAI_API_KEY=\nGITHUB_TOKEN=${SECRET_B}\nGITHUB_TOKEN=${SECRET_C}` }),
+  );
+  assert.deepEqual(keys(result), [
+    `plaintext ${stateEnv}:1 OPENAI_API_KEY`,
+    `plaintext ${stateEnv}:3 GITHUB_TOKEN`,
+    `plaintext ${stateEnv}:4 GITHUB_TOKEN`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("apiKey markers do not exempt other secret fields", () => {
+  const config = JSON.stringify({
+    a: { password: "oauth:hunter2" },
+    b: { token: "ollama-local" },
+    c: { apiKey: "oauth:openai-codex" },
+    d: { token: "secretref-env:GATEWAY_TOKEN" },
+  });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [`plaintext ${configPath} a.password`, `plaintext ${configPath} b.token`]);
+});
+
+test("numeric credentials under token, key, and pin names are plaintext", () => {
+  const config =
+    "{ a: { token: 1234567890 }, b: { apiKey: 987654321 }, c: { pin: 1234 }, " +
+    "d: { maxTokens: 4096, tokenLimit: 100, keyCount: 3 } }";
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [
+    `plaintext ${configPath} a.token`,
+    `plaintext ${configPath} b.apiKey`,
+    `plaintext ${configPath} c.pin`,
+  ]);
+});
+
+test("a header built only from references and separators is not plaintext", () => {
+  const config = JSON.stringify({ h: { Authorization: "Basic ${USER_NAME}:${USER_PASSWORD}" } });
+  assert.equal(assessPlaintextSecrets(locations, fakeReader({ [configPath]: config })).grade, "pass");
+});
+
 test("crafted unterminated references are handled in linear time", () => {
   const config = JSON.stringify({ p: { apiKey: "${A:-".repeat(40_000) } });
   const started = performance.now();
