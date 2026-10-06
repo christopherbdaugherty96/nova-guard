@@ -275,7 +275,9 @@ by `openclaw security audit --deep`), ported unchanged with attribution in
   Walks run on resolved real paths, so a root behind a long symlink chain does
   not slow every call; reports keep the discovered paths. The whole check stops
   after 120 seconds and reports the rest as `unknown` (`time-limit`), never
-  `pass`; script-file walks stop after 1,000,000 directory entries across all
+  `pass`. OpenClaw's `literal-secret` pattern, kept unchanged for parity, can
+  take tens of seconds on a hostile 256,000-byte `SKILL.md`; such a scan
+  cannot be interrupted, so the worst case can overrun the limit by that much; script-file walks stop after 1,000,000 directory entries across all
   skills; whatever is left is unknown.
 
 Reports give the skill directory, file, line, rule id, and severity only:
