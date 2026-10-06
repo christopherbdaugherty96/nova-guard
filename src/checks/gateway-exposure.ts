@@ -61,21 +61,29 @@ export function assessGatewayExposure(
 ): GatewayExposureResult {
   const tailscaleMode = config.gateway?.tailscale?.mode;
   const auth = authMode(config);
+  const tailscaleFinding = assessTailscaleExposure(tailscaleMode, auth, config, context);
+  const bindConfig =
+    (tailscaleMode === "serve" || tailscaleMode === "funnel") &&
+    config.gateway?.bind === undefined
+      ? {
+          ...config,
+          gateway: { ...config.gateway, bind: "loopback" },
+        }
+      : config;
+  const bindFinding = assessBindExposure(bindConfig, context, auth);
+  return combineFindings(bindFinding, tailscaleFinding);
+}
 
-  if (tailscaleMode === "funnel") {
-    const passwordVerified =
-      auth === "password" && hasAuthEvidence(config, context);
-    return {
-      grade: passwordVerified ? "warning" : "critical",
-      bind: "tailscale funnel (public)",
-      auth,
-      summary: passwordVerified
-        ? "Public internet exposure via Tailscale Funnel."
-        : "Public Tailscale Funnel exposure lacks evidenced password authentication.",
-    };
+function assessTailscaleExposure(
+  mode: unknown,
+  auth: GatewayExposureResult["auth"],
+  config: OpenClawConfig,
+  context: GatewayRuntimeContext,
+): GatewayExposureResult | undefined {
+  if (mode === undefined || mode === "off") {
+    return undefined;
   }
-
-  if (tailscaleMode === "serve") {
+  if (mode === "serve") {
     return {
       grade: "warning",
       bind: "tailscale serve (tailnet)",
@@ -83,16 +91,43 @@ export function assessGatewayExposure(
       summary: "Gateway is reachable from the tailnet via Tailscale Serve.",
     };
   }
+  if (mode === "funnel") {
+    const authModeExplicit = config.gateway?.auth?.mode !== undefined;
+    if (authModeExplicit && auth !== "password") {
+      return {
+        grade: "critical",
+        bind: "tailscale funnel (public)",
+        auth,
+        summary: "Public Tailscale Funnel exposure has a non-password auth mode.",
+      };
+    }
+    return {
+      grade: "warning",
+      bind: "tailscale funnel (public)",
+      auth,
+      summary: hasAuthEvidence(config, context)
+        ? "Public internet exposure via Tailscale Funnel."
+        : "Public internet exposure via Tailscale Funnel; password is not verifiable.",
+    };
+  }
+  return {
+    grade: "unknown",
+    bind: `tailscale (${String(mode)})`,
+    auth,
+    summary: "Tailscale mode is unrecognized by this scanner version.",
+  };
+}
+
+function assessBindExposure(
+  config: OpenClawConfig,
+  context: GatewayRuntimeContext,
+  auth: GatewayExposureResult["auth"],
+): GatewayExposureResult {
 
   const bindValue = config.gateway?.bind;
   let bind: string;
   if (typeof bindValue === "string") {
     bind = bindValue;
-  } else if (
-    typeof config.gateway?.tailscale?.mode === "string" &&
-    config.gateway.tailscale.mode !== "off"
-  ) {
-    bind = "loopback";
   } else if (context.isContainer === true) {
     bind = "auto";
   } else if (context.isContainer === false) {
@@ -151,6 +186,38 @@ export function assessGatewayExposure(
     bind,
     auth,
     summary: "Gateway binding is not recognized by this scanner version.",
+  };
+}
+
+const gradeRank: Record<GatewayExposureResult["grade"], number> = {
+  pass: 0,
+  unknown: 1,
+  warning: 2,
+  critical: 3,
+};
+
+function combineFindings(
+  bindFinding: GatewayExposureResult,
+  tailscaleFinding: GatewayExposureResult | undefined,
+): GatewayExposureResult {
+  if (!tailscaleFinding) {
+    return bindFinding;
+  }
+  const primary =
+    gradeRank[bindFinding.grade] >= gradeRank[tailscaleFinding.grade]
+      ? bindFinding
+      : tailscaleFinding;
+  if (bindFinding.grade === "pass") {
+    return tailscaleFinding;
+  }
+  if (tailscaleFinding.grade === "pass") {
+    return bindFinding;
+  }
+  return {
+    ...primary,
+    summary: `${primary.summary} Also: ${
+      primary === bindFinding ? tailscaleFinding.summary : bindFinding.summary
+    }`,
   };
 }
 

@@ -155,7 +155,7 @@ test("explicit loopback with Tailscale Funnel still reports public exposure", ()
   );
 });
 
-test("Tailscale Funnel without evidenced password auth is critical", () => {
+test("Tailscale Funnel without evidenced password auth is warning", () => {
   assert.deepEqual(
     assessGatewayExposure({
       gateway: {
@@ -164,10 +164,10 @@ test("Tailscale Funnel without evidenced password auth is critical", () => {
       },
     }),
     {
-      grade: "critical",
+      grade: "warning",
       bind: "tailscale funnel (public)",
       auth: "password",
-      summary: "Public Tailscale Funnel exposure lacks evidenced password authentication.",
+      summary: "Public internet exposure via Tailscale Funnel; password is not verifiable.",
     },
   );
 });
