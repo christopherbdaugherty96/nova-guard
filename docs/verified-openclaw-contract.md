@@ -60,6 +60,10 @@ Sources:
   The version line does not name its package, so every package's advisories
   apply to the shared calendar version line. A match with any critical or high
   advisory grades `critical`; only moderate or low grades `warning`.
+- OpenClaw publishes numeric hotfixes (`X-1`, `X-2`) after release `X`, but
+  SemVer orders them before `X`, so a hotfix is graded as both itself and `X`.
+  The generator refuses to write a bundle with an empty package list, an
+  unknown severity, or a range `semver` cannot parse.
 - `openclaw --version` prints one line on stdout. Older releases print the
   bare version (verified at `v2026.1.24`, published as `clawdbot`
   `2026.1.24-0`, and at `v2026.1.29` and `v2026.1.30`). Current `main` prints `OpenClaw <version>` or

@@ -79,8 +79,16 @@ export function assessOpenClawVersion(
     return unknown("OpenClaw version output was not recognized.");
   }
 
+  // OpenClaw publishes numeric hotfixes (X-1, X-2) after release X, but SemVer
+  // orders them before X. Grade a hotfix as both itself and X so neither an
+  // advisory introduced in X nor one ending at X-N is missed.
+  const candidates = prerelease !== undefined && /^\d+$/.test(prerelease)
+    ? [version, `${year}.${month}.${counter}`]
+    : [version];
   const matched = advisories.filter((advisory) =>
-    semver.satisfies(version, advisory.vulnerableVersions, { includePrerelease: true }),
+    candidates.some((candidate) =>
+      semver.satisfies(candidate, advisory.vulnerableVersions, { includePrerelease: true }),
+    ),
   );
   if (matched.length === 0) {
     return {

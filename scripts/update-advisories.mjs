@@ -6,12 +6,18 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
+import semver from "semver";
+
 const packages = ["openclaw", "clawdbot", "moltbot"];
-const endpoint = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk";
+const registry = "https://registry.npmjs.org/";
+const endpoint = `${registry}-/npm/v1/security/advisories/bulk`;
+const severities = new Set(["critical", "high", "moderate", "low"]);
 
 const request = {};
 for (const name of packages) {
-  const raw = execFileSync("npm", ["view", name, "versions", "--json"], { encoding: "utf8" });
+  const raw = execFileSync("npm", ["view", name, "versions", "--json", "--registry", registry], {
+    encoding: "utf8",
+  });
   const versions = JSON.parse(raw);
   request[name] = Array.isArray(versions) ? versions : [versions];
 }
@@ -28,8 +34,16 @@ const body = await response.json();
 
 const seen = new Set();
 const advisories = [];
+// A malformed or partial response must never become an empty bundle, which
+// would make every version pass.
 for (const name of packages) {
-  for (const advisory of body[name] ?? []) {
+  if (!Array.isArray(body[name]) || body[name].length === 0) {
+    throw new Error(`No advisories returned for ${name}; refusing to write the bundle.`);
+  }
+}
+
+for (const name of packages) {
+  for (const advisory of body[name]) {
     const ghsa = /GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}/.exec(advisory.url)?.[0];
     if (!ghsa) {
       throw new Error(`Advisory without a GHSA id: ${advisory.url}`);
@@ -37,6 +51,13 @@ for (const name of packages) {
     const key = `${name}:${ghsa}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    if (!severities.has(advisory.severity)) {
+      throw new Error(`${ghsa}: unexpected severity ${advisory.severity}`);
+    }
+    // An invalid range would silently never match, a quiet false pass.
+    if (semver.validRange(advisory.vulnerable_versions) === null) {
+      throw new Error(`${ghsa}: invalid range ${advisory.vulnerable_versions}`);
+    }
     advisories.push({
       ghsa,
       package: name,
