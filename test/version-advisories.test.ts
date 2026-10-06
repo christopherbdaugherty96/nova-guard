@@ -156,6 +156,7 @@ test("a hotfix published after a fixed release is not affected", () => {
 test("an inclusive bound on a release still covers that release's hotfixes", () => {
   // <=2026.7.2 does not say whether 2026.7.2-1 carried the fix.
   assert.equal(assessOpenClawVersion("2026.7.2-1").grade, "critical");
+  assert.equal(assessOpenClawVersion("2026.7.2-1000000000").grade, "critical");
   assert.equal(assessOpenClawVersion("2026.7.3").grade, "pass");
 });
 
@@ -163,6 +164,26 @@ test("a -0 lower bound keeps its SemVer meaning of every prerelease", () => {
   assert.equal(assessOpenClawVersion("2026.8.1").grade, "critical");
   assert.equal(assessOpenClawVersion("2026.8.1-beta.1").grade, "critical");
   assert.equal(assessOpenClawVersion("2026.7.31").grade, "pass");
+});
+
+test("advisory data in an unsupported range form is never trusted", () => {
+  for (const vulnerableVersions of ["2026.1.1 - 2026.7.2", "<2026.2.1 || >=2026.3.1", "^2026.1.1", "2026.1.x"]) {
+    const result = assessWithBundle(
+      "2026.9.2",
+      [{ ...fixture[0], vulnerableVersions }],
+      "2026-10-06",
+    );
+    assert.deepEqual(
+      result,
+      {
+        grade: "unknown",
+        version: "2026.9.2",
+        advisories: [],
+        summary: "Bundled advisory data contains a range this scanner cannot evaluate.",
+      },
+      vulnerableVersions,
+    );
+  }
 });
 
 test("ANSI and other terminal escapes do not hide the version", () => {
@@ -282,6 +303,10 @@ test("bundled data is dated, well-formed, and parseable", () => {
     assert.ok(["openclaw", "clawdbot", "moltbot"].includes(advisory.package));
     assert.ok(["critical", "high", "moderate", "low"].includes(advisory.severity));
     assert.ok(semver.validRange(advisory.vulnerableVersions), advisory.vulnerableVersions);
+    assert.match(
+      advisory.vulnerableVersions,
+      /^(?:<=|>=|<|>|=)?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?: (?:<=|>=|<|>|=)?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)*$/,
+    );
   }
 });
 
