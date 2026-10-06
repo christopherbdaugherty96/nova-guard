@@ -85,7 +85,9 @@ export interface SkillFs {
 }
 
 export const nodeSkillFs: SkillFs = {
-  realpath: (file) => realpathSync(file),
+  // The native resolver is one syscall; the JS one lstats every path prefix,
+  // which is quadratic in depth.
+  realpath: (file) => realpathSync.native(file),
   lstat: (file) => lstatSync(file),
   stat: (file) => statSync(file),
   readdir: (dir) => readdirSync(dir, { withFileTypes: true }),
@@ -130,6 +132,8 @@ const maxTotalScanEntries = 1_000_000;
 const maxDiscoveryDirsPerRoot = 20_000;
 // Directories visited across every root together.
 const defaultMaxDiscoveryDirs = 200_000;
+// Symlinks resolved during discovery, across every root together.
+const defaultMaxSymlinkResolutions = 20_000;
 const maxReportedPathLength = 4096;
 
 type SymlinkPolicy = "any" | "contained" | "contained-or-allowed";
@@ -190,9 +194,11 @@ export function assessRiskySkills(
   locations: SkillLocations,
   configInput: SkillConfigInput,
   fs: SkillFs = nodeSkillFs,
-  limits: { maxDiscoveryDirs?: number } = {},
+  limits: { maxDiscoveryDirs?: number; maxSymlinkResolutions?: number } = {},
 ): RiskySkillsResult {
   const maxDiscoveryDirs = limits.maxDiscoveryDirs ?? defaultMaxDiscoveryDirs;
+  const maxSymlinkResolutions = limits.maxSymlinkResolutions ?? defaultMaxSymlinkResolutions;
+  let symlinkResolutions = 0;
   const unknown: RiskySkillsResult["unknown"] = [];
   const findings: RiskySkillFinding[] = [];
   const markUnknown = (location: string, reason: SkillUnknownReason) =>
@@ -331,7 +337,9 @@ export function assessRiskySkills(
     const visited = new Set<string>([rootReal]);
     const queue: { dir: string; real: string; depth: number }[] = [{ dir: rootDir, real: rootReal, depth: 0 }];
     let visitedDirs = 0;
+    let truncated = false;
     for (const { dir, real, depth } of queue) {
+      if (truncated) break;
       visitedDirs += 1;
       totalDiscoveryDirs += 1;
       if (visitedDirs > maxDiscoveryDirsPerRoot || totalDiscoveryDirs > maxDiscoveryDirs) {
@@ -358,6 +366,12 @@ export function assessRiskySkills(
           // A real subdirectory of a real directory: no realpath walk needed.
           childReal = path.join(real, entry.name);
         } else if (entry.isSymbolicLink()) {
+          symlinkResolutions += 1;
+          if (symlinkResolutions > maxSymlinkResolutions) {
+            markUnknown(rootDir, "discovery-truncated");
+            truncated = true;
+            break;
+          }
           childReal = tryRealpath(child);
           if (childReal === undefined) continue;
           try {
