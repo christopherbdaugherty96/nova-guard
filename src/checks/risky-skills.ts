@@ -134,6 +134,11 @@ const maxDiscoveryDirsPerRoot = 20_000;
 const defaultMaxDiscoveryDirs = 200_000;
 // Symlinks resolved during discovery, across every root together.
 const defaultMaxSymlinkResolutions = 20_000;
+// Resolving a link costs about depth^2 path lookups (realpath(3) checks every
+// prefix), so links are also charged by their target's depth squared. This
+// caps the worst case near a minute while 20,000 shallow links stay well
+// inside it.
+const defaultMaxSymlinkCost = 2_000_000_000;
 const maxReportedPathLength = 4096;
 
 type SymlinkPolicy = "any" | "contained" | "contained-or-allowed";
@@ -194,11 +199,13 @@ export function assessRiskySkills(
   locations: SkillLocations,
   configInput: SkillConfigInput,
   fs: SkillFs = nodeSkillFs,
-  limits: { maxDiscoveryDirs?: number; maxSymlinkResolutions?: number } = {},
+  limits: { maxDiscoveryDirs?: number; maxSymlinkResolutions?: number; maxSymlinkCost?: number } = {},
 ): RiskySkillsResult {
   const maxDiscoveryDirs = limits.maxDiscoveryDirs ?? defaultMaxDiscoveryDirs;
   const maxSymlinkResolutions = limits.maxSymlinkResolutions ?? defaultMaxSymlinkResolutions;
+  const maxSymlinkCost = limits.maxSymlinkCost ?? defaultMaxSymlinkCost;
   let symlinkResolutions = 0;
+  let symlinkCost = 0;
   const unknown: RiskySkillsResult["unknown"] = [];
   const findings: RiskySkillFinding[] = [];
   const markUnknown = (location: string, reason: SkillUnknownReason) =>
@@ -374,6 +381,13 @@ export function assessRiskySkills(
           }
           childReal = tryRealpath(child);
           if (childReal === undefined) continue;
+          const components = childReal.split(path.sep).length;
+          symlinkCost += components * components;
+          if (symlinkCost > maxSymlinkCost) {
+            markUnknown(rootDir, "discovery-truncated");
+            truncated = true;
+            break;
+          }
           try {
             if (!fs.stat(childReal).isDirectory()) continue;
           } catch {
