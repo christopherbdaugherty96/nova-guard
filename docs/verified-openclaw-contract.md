@@ -56,6 +56,9 @@ Sources:
 - The exact `openclaw --version` output format is not documented, so the
   scanner extracts a single `YYYY.M.D[-prerelease]` token and reports
   `unknown` when none, or more than one distinct version, is present.
+- Versions are `YYYY.M.N`. `N` is usually the day, but Extended Stable releases
+  use it as a maintenance counter (official tags `v2026.6.33` to `v2026.8.35`),
+  so the scanner enforces only month 1-12 and a non-zero `N`.
 - Every word in the output that resembles a calendar version must parse
   strictly, so a malformed real version cannot be skipped in favour of a build
   date. Output over 4 KiB is reported as `unknown`. Separators the parser does

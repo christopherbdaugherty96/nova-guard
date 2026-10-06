@@ -64,7 +64,7 @@ export function assessOpenClawVersion(
     }
     const [, year, month, day, prerelease] = match;
     const core: Core = [Number(year), Number(month), Number(day)];
-    if (!isCalendarDate(core)) {
+    if (!isReleaseVersion(core)) {
       return unknown("OpenClaw version output was not recognized.");
     }
     const label = `${core.join(".")}${prerelease ? `-${prerelease}` : ""}`;
@@ -128,13 +128,13 @@ function unknown(summary: string): VersionAdvisoryResult {
   return { grade: "unknown", version: null, advisories: [], summary };
 }
 
-function isCalendarDate([year, month, day]: Core): boolean {
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
+/**
+ * OpenClaw versions are year.month.N. N is usually the day but Extended Stable
+ * releases use it as a maintenance counter (for example v2026.6.35), so only
+ * the month range and a non-zero counter are enforced.
+ */
+function isReleaseVersion([, month, counter]: Core): boolean {
+  return month >= 1 && month <= 12 && counter >= 1;
 }
 
 function trimTrailingDots(value: string): string {
