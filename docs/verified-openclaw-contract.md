@@ -271,7 +271,11 @@ by `openclaw security audit --deep`), ported unchanged with attribution in
   walked once. Discovery visits at most 20,000 directories per root and 200,000
   in all, and resolves at most 20,000 symlinks in all (each also charged by its target's
   depth squared, so links into very deep trees exhaust the budget sooner) and
-  spends at most 30 seconds resolving them, failed resolutions included; script-file walks stop after 1,000,000 directory entries across all
+  spends at most 30 seconds resolving them, failed resolutions included.
+  Walks run on resolved real paths, so a root behind a long symlink chain does
+  not slow every call; reports keep the discovered paths. The whole check stops
+  after 120 seconds and reports the rest as `unknown` (`time-limit`), never
+  `pass`; script-file walks stop after 1,000,000 directory entries across all
   skills; whatever is left is unknown.
 
 Reports give the skill directory, file, line, rule id, and severity only:
@@ -280,7 +284,8 @@ never the matched text (OpenClaw shows it as evidence) and never the skill's
 rules match, `unknown` if anything could not be evaluated, else `pass`.
 Unknown, where OpenClaw silently skips or fails: a `SKILL.md` over 256,000
 bytes or a script file over 1 MiB, more than 500 script files, an unreadable
-root, directory, or file, a non-regular `SKILL.md`, a relative configured path
+root, directory, or file, a non-regular `SKILL.md`, any scan limit or the time
+limit being reached, a relative configured path
 (OpenClaw resolves it against its own working directory), and an unreadable
 config. Missing roots are not unknown.
 

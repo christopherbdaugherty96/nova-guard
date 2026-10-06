@@ -532,10 +532,11 @@ test("roots that resolve to the same directory are walked once", posixOnly, () =
       symlinkSync(shared, path.join(agentDir, "workshop-skills"));
     }
     let sharedListings = 0;
+    const sharedReal = nodeSkillFs.realpath(shared);
     const counting: SkillFs = {
       ...nodeSkillFs,
       readdir(dir) {
-        if (dir.includes("workshop-skills")) sharedListings += 1;
+        if (dir.includes("workshop-skills") || dir.startsWith(sharedReal)) sharedListings += 1;
         return nodeSkillFs.readdir(dir);
       },
     };

@@ -54,7 +54,8 @@ export type SkillUnknownReason =
   | "scan-truncated"
   | "discovery-truncated"
   | "relative-path"
-  | "config-unreadable";
+  | "config-unreadable"
+  | "time-limit";
 
 export interface RiskySkillsResult {
   grade: "pass" | "warning" | "critical" | "unknown";
@@ -143,6 +144,10 @@ const defaultMaxSymlinkCost = 2_000_000_000;
 // links that fail deep in a tree), so the time spent resolving discovery
 // links is also capped. 20,000 ordinary links take well under a second.
 const defaultMaxSymlinkMillis = 30_000;
+// A hard ceiling on the whole assessment. Hostile trees can make individual
+// filesystem calls arbitrarily slow (deep symlink chains), so per-item budgets
+// alone cannot bound the run; past this, the remainder is unknown, never pass.
+const defaultMaxMillis = 120_000;
 const maxReportedPathLength = 4096;
 
 type SymlinkPolicy = "any" | "contained" | "contained-or-allowed";
@@ -208,6 +213,7 @@ export function assessRiskySkills(
     maxSymlinkResolutions?: number;
     maxSymlinkCost?: number;
     maxSymlinkMillis?: number;
+    maxMillis?: number;
     now?: () => number;
   } = {},
 ): RiskySkillsResult {
@@ -223,6 +229,15 @@ export function assessRiskySkills(
   const findings: RiskySkillFinding[] = [];
   const markUnknown = (location: string, reason: SkillUnknownReason) =>
     unknown.push({ path: sanitize(location), reason });
+  const deadline = now() + (limits.maxMillis ?? defaultMaxMillis);
+  let timedOut = false;
+  const timeUp = (): boolean => {
+    if (!timedOut && now() > deadline) {
+      timedOut = true;
+      markUnknown("scan", "time-limit");
+    }
+    return timedOut;
+  };
 
   if (configInput.status === "unreadable") markUnknown("config", "config-unreadable");
   const config = configInput.status === "ok" && isRecord(configInput.config) ? configInput.config : {};
@@ -343,6 +358,7 @@ export function assessRiskySkills(
   const seenRoots = new Set<string>();
   let totalDiscoveryDirs = 0;
   for (const root of roots) {
+    if (timeUp()) break;
     const rootDir = path.resolve(root.dir);
     let rootReal: string;
     try {
@@ -358,22 +374,25 @@ export function assessRiskySkills(
     const queue: { dir: string; real: string; depth: number }[] = [{ dir: rootDir, real: rootReal, depth: 0 }];
     let visitedDirs = 0;
     let truncated = false;
+    // fs calls use real paths: a root reached through a long symlink chain
+    // would otherwise make every call re-walk the chain. Reports keep the
+    // discovered paths.
     for (const { dir, real, depth } of queue) {
-      if (truncated) break;
+      if (truncated || timeUp()) break;
       visitedDirs += 1;
       totalDiscoveryDirs += 1;
       if (visitedDirs > maxDiscoveryDirsPerRoot || totalDiscoveryDirs > maxDiscoveryDirs) {
         markUnknown(rootDir, "discovery-truncated");
         break;
       }
-      if (!(root.container && depth === 0) && hasSkillFile(dir)) {
+      if (!(root.container && depth === 0) && hasSkillFile(real)) {
         if (!skillsByRealPath.has(real)) skillsByRealPath.set(real, dir);
         continue;
       }
       if (depth >= maxDiscoveryDepth) continue;
       let entries: SkillDirent[];
       try {
-        entries = fs.readdir(dir);
+        entries = fs.readdir(real);
       } catch (error) {
         if (!isMissing(error)) markUnknown(dir, "unreadable");
         continue;
@@ -393,7 +412,7 @@ export function assessRiskySkills(
             break;
           }
           const started = now();
-          childReal = tryRealpath(child);
+          childReal = tryRealpath(path.join(real, entry.name));
           symlinkMillis += now() - started;
           if (symlinkMillis > maxSymlinkMillis) {
             markUnknown(rootDir, "discovery-truncated");
@@ -454,15 +473,15 @@ export function assessRiskySkills(
   ) => {
     const key = `${maxBytes}\u0000${realFile}`;
     if (!scanCache.has(key)) {
-      const text = readFor(file, maxBytes);
+      const text = readFor(file, realFile, maxBytes);
       scanCache.set(key, text === undefined ? undefined : scan(text));
     }
     return scanCache.get(key);
   };
-  const readFor = (file: string, maxBytes: number): string | undefined => {
+  const readFor = (file: string, realFile: string, maxBytes: number): string | undefined => {
     let result: SkillTextRead;
     try {
-      result = fs.readText(file, maxBytes);
+      result = fs.readText(realFile, maxBytes);
     } catch (error) {
       if (!isMissing(error)) markUnknown(file, "unreadable");
       return undefined;
@@ -474,6 +493,7 @@ export function assessRiskySkills(
 
   let totalScanEntries = 0;
   for (const [skillReal, skillDir] of skillsByRealPath) {
+    if (timeUp()) break;
     // SKILL.md: OpenClaw applies both its skill-text and source rules.
     const skillFile = path.join(skillDir, "SKILL.md");
     const skillHits = scanOnce(skillFile, path.join(skillReal, "SKILL.md"), maxSkillFileBytes, (text) => [
@@ -484,15 +504,15 @@ export function assessRiskySkills(
 
     // Script files, walked like OpenClaw's scanner: no symlinks, no dot
     // entries, no node_modules.
-    const files: string[] = [];
+    const files: { file: string; real: string }[] = [];
     let entriesSeen = 0;
     let truncated = false;
-    const queue = [skillDir];
-    for (const dir of queue) {
-      if (truncated) break;
+    const queue = [{ dir: skillDir, real: skillReal }];
+    for (const { dir, real } of queue) {
+      if (truncated || timeUp()) break;
       let entries: SkillDirent[];
       try {
-        entries = fs.readdir(dir);
+        entries = fs.readdir(real);
       } catch (error) {
         if (!isMissing(error)) markUnknown(dir, "unreadable");
         continue;
@@ -506,9 +526,9 @@ export function assessRiskySkills(
         }
         if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.isSymbolicLink()) continue;
         if (entry.isDirectory()) {
-          queue.push(path.join(dir, entry.name));
+          queue.push({ dir: path.join(dir, entry.name), real: path.join(real, entry.name) });
         } else if (entry.isFile() && isScannable(entry.name)) {
-          files.push(path.join(dir, entry.name));
+          files.push({ file: path.join(dir, entry.name), real: path.join(real, entry.name) });
           if (files.length > maxScriptFiles) {
             truncated = true;
             break;
@@ -517,8 +537,9 @@ export function assessRiskySkills(
       }
     }
     if (truncated) markUnknown(skillDir, "scan-truncated");
-    for (const file of files.slice(0, maxScriptFiles)) {
-      const hits = scanOnce(file, path.join(skillReal, path.relative(skillDir, file)), maxScriptFileBytes, scanSource);
+    for (const { file, real } of files.slice(0, maxScriptFiles)) {
+      if (timeUp()) break;
+      const hits = scanOnce(file, real, maxScriptFileBytes, scanSource);
       if (hits) report(skillDir, file, hits);
     }
   }
