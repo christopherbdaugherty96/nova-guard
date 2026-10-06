@@ -132,6 +132,22 @@ test("an update notice alongside the installed version is unknown", () => {
   );
 });
 
+test("impossible calendar dates are unknown, not pass", () => {
+  for (const input of ["2026.13.1", "2026.99.99", "2026.0.1", "2026.2.30", "2026.1.0"]) {
+    assert.deepEqual(
+      assessOpenClawVersion(input),
+      {
+        grade: "unknown",
+        version: null,
+        advisories: [],
+        summary: "OpenClaw version output was not recognized.",
+      },
+      input,
+    );
+  }
+  assert.equal(assessOpenClawVersion("2028.2.29").grade, "pass");
+});
+
 test("missing version output is unknown, not pass", () => {
   for (const input of [undefined, "", "   \n"]) {
     assert.deepEqual(assessOpenClawVersion(input), {
