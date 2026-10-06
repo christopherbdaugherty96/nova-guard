@@ -117,11 +117,45 @@ Sources:
   cannot prove which process-only secrets exist.
 - Reports must emit the file path and key name only, never the value.
 
+Verified against OpenClaw `main` at `282f796d` (2026-10-05), whose own
+`openclaw secrets audit` (`src/secrets/audit.ts`) scans the same files. The
+scanner reads, never writes:
+
+- `.env` files: `<stateDir>/.env`, `<configDir>/.env`, and
+  `~/.config/openclaw/gateway.env` (`src/secrets/storage-scan.ts`,
+  `src/infra/dotenv-global-core.ts`). Lines of the form
+  `[export ]KEY=value` with a secret-like `KEY` and a non-empty value
+  (after removing matching quotes) are reported as `file:line KEY`.
+- `openclaw.json` (JSON5): any string under a secret-like key that is a
+  literal, not a `${VAR}` reference or SecretRef object, is reported by dotted
+  path. This covers `env.vars.*` and `env.*`
+  (`src/config/config-env-values.ts`). A non-empty `${VAR:-fallback}` is a
+  plaintext secret when either the key or `VAR` is secret-like, because the
+  fallback is config text (docs: config-secrets-env). `$${VAR}` is an escaped
+  literal, and only upper-case names are substituted.
+- `<stateDir>/agents/*/agent/models.json` (always including `main`):
+  `providers.*.apiKey` unless it is one of OpenClaw's non-secret markers
+  (`src/agents/model-auth-markers.ts`), and `providers.*.headers.*` whose name
+  is sensitive (`src/secrets/model-provider-header-policy.ts`).
+- Secret-like names use OpenClaw's own conservative fragments (`api-key`,
+  `apikey`, `token`, `secret`, `password`, `credential`, plus
+  `authorization`); names ending in `file`, `path`, `env`, `ref`, `url`, or
+  `uri` point elsewhere and are skipped.
+- Files over 1 MiB, unreadable files, and unparseable JSON are reported as
+  `unknown` by path only; parser messages, which can quote file bytes, are
+  never surfaced. Findings never include values, fragments, lengths, or hashes.
+- Not scanned in v0.1: auth-profile SQLite stores, the live process or service
+  environment, and archived legacy auth files. A key name or path segment that
+  is itself a secret would be reported as a name.
+
 Sources:
 
 - <https://docs.openclaw.ai/help/environment>
 - <https://docs.openclaw.ai/gateway/config-secrets-env>
 - <https://docs.openclaw.ai/setup>
+- <https://github.com/openclaw/openclaw/blob/main/src/secrets/audit.ts>
+- <https://github.com/openclaw/openclaw/blob/main/src/secrets/storage-scan.ts>
+- <https://github.com/openclaw/openclaw/blob/main/src/agents/model-auth-markers.ts>
 
 ## Skills
 

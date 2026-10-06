@@ -15,3 +15,14 @@ export {
   advisoryDataSource,
   bundledAdvisories,
 } from "./data/openclaw-advisories.js";
+export {
+  assessPlaintextSecrets,
+  isSecretLikeName,
+  nodeSecretFileReader,
+} from "./checks/plaintext-secrets.js";
+export type {
+  PlaintextSecretsResult,
+  SecretFileReader,
+  SecretFinding,
+  SecretLocations,
+} from "./checks/plaintext-secrets.js";
