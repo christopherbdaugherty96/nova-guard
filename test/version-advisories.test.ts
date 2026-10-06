@@ -117,6 +117,12 @@ test("output that does not say it is the installed version is unknown", () => {
     "OpenClaw 2026.9.2 (not-a-commit)",
     "OpenClaw 2026.9.2 — tagline",
     "2026.9.2 2026.9.2",
+    "OpenClaw 2026.9.2 (282f796a)",
+    "OpenClaw 2026.9.2 (282f796dfa057e1e21fcdd0f3686712578b0c0e9)",
+    "2026.01.029",
+    "2026.1.30-01",
+    "OpenClaw 2026.1.30-beta.01",
+    "0999.1.1",
   ]) {
     assert.deepEqual(assessOpenClawVersion(input), notRecognized, JSON.stringify(input));
   }
