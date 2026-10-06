@@ -14,6 +14,9 @@ interface OpenClawConfig {
       mode?: unknown;
       token?: unknown;
       password?: unknown;
+      trustedProxy?: {
+        userHeader?: unknown;
+      };
     };
   };
 }
@@ -34,6 +37,12 @@ export interface GatewayExposureResult {
 function authMode(config: OpenClawConfig): GatewayExposureResult["auth"] {
   const value = config.gateway?.auth?.mode;
   if (value === undefined) {
+    if (hasConfiguredShape(config.gateway?.auth?.password)) {
+      return "password";
+    }
+    if (hasConfiguredShape(config.gateway?.auth?.token)) {
+      return "token";
+    }
     return "default";
   }
   if (
@@ -254,10 +263,11 @@ function exposedResult(
 }
 
 function hasConfiguredSecret(value: unknown): boolean {
+  const trimmed = typeof value === "string" ? value.trim() : "";
   return (
-    typeof value === "string" &&
-    value.trim().length > 0 &&
-    !/^\$\{[^}]+\}$/.test(value.trim())
+    trimmed.length > 0 &&
+    (!/^\$\{[^}]+\}$/.test(trimmed) ||
+      /^\$\{[^}:]+:-[^}]+\}$/.test(trimmed))
   );
 }
 
@@ -281,8 +291,14 @@ function hasAuthEvidence(
   if (mode === "trusted-proxy") {
     return (
       Array.isArray(config.gateway?.trustedProxies) &&
-      config.gateway.trustedProxies.length > 0
+      config.gateway.trustedProxies.length > 0 &&
+      typeof config.gateway?.auth?.trustedProxy?.userHeader === "string" &&
+      config.gateway.auth.trustedProxy.userHeader.trim().length > 0
     );
   }
   return false;
+}
+
+function hasConfiguredShape(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }
