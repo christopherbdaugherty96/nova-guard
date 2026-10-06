@@ -443,6 +443,82 @@ test("models.json findings keep the fallback kind", () => {
   assertNoLeak(result);
 });
 
+test("config files referenced by $include are scanned with OpenClaw's rules", () => {
+  const gatewayFile = path.join(stateDir, "gateway.json5");
+  const channelsDir = path.join(stateDir, "parts");
+  const discordFile = path.join(channelsDir, "discord.json5");
+  const slackFile = path.join(channelsDir, "slack.json5");
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [configPath]: `{ gateway: { $include: "./gateway.json5" }, channels: { $include: ["parts/discord.json5", "${slackFile}"] } }`,
+      [gatewayFile]: `{ auth: { mode: "token", token: "${SECRET_A}" } }`,
+      // Nested includes resolve relative to the including file.
+      [discordFile]: `{ discord: { token: "${SECRET_B}" }, $include: "./slack.json5" }`,
+      [slackFile]: `{ slack: { botToken: "${SECRET_C}" } }`,
+    }),
+  );
+  assert.deepEqual(keys(result), [
+    `plaintext ${gatewayFile} auth.token`,
+    `plaintext ${discordFile} discord.token`,
+    `plaintext ${slackFile} slack.botToken`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("$include cycles terminate and paths outside the config roots are not read", () => {
+  const a = path.join(stateDir, "a.json5");
+  const b = path.join(stateDir, "b.json5");
+  const outside = path.join(home, "outside.json5");
+  const sharedRoot = path.join(home, "shared");
+  const shared = path.join(sharedRoot, "keys.json5");
+  const requested: string[] = [];
+  const base = fakeReader({
+    [configPath]: `{ $include: ["./a.json5", "../outside.json5", "${shared}"] }`,
+    [a]: `{ $include: "./b.json5" }`,
+    [b]: `{ $include: "./a.json5", x: { token: "${SECRET_A}" } }`,
+    [outside]: `{ token: "${SECRET_B}" }`,
+    [shared]: `{ token: "${SECRET_C}" }`,
+  });
+  const reader: SecretFileReader = {
+    readText(file) {
+      requested.push(file);
+      return base.readText(file);
+    },
+    listDirectories: base.listDirectories,
+  };
+  const withoutRoot = assessPlaintextSecrets(locations, reader);
+  assert.deepEqual(keys(withoutRoot), [`plaintext ${b} x.token`]);
+  assert.ok(!requested.includes(outside));
+  assert.ok(!requested.includes(shared));
+
+  const withRoot = assessPlaintextSecrets({ ...locations, includeRoots: [sharedRoot] }, reader);
+  assert.deepEqual(keys(withRoot), [`plaintext ${b} x.token`, `plaintext ${shared} token`]);
+  assertNoLeak(withRoot);
+});
+
+test("missing, unparseable, or too deeply nested includes are unknown", () => {
+  const missing = path.join(stateDir, "missing.json5");
+  const broken = path.join(stateDir, "broken.json5");
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [configPath]: `{ $include: ["./missing.json5", "./broken.json5"] }`,
+      [broken]: `{ token: "${SECRET_A}" `,
+    }),
+  );
+  assert.equal(result.grade, "unknown");
+  assert.deepEqual(result.unreadable, [missing, broken]);
+  assertNoLeak(result);
+
+  const chain: Record<string, string> = { [configPath]: `{ $include: "./d1.json5" }` };
+  for (let depth = 1; depth <= 11; depth += 1) {
+    chain[path.join(stateDir, `d${depth}.json5`)] = `{ $include: "./d${depth + 1}.json5" }`;
+  }
+  const deep = assessPlaintextSecrets(locations, fakeReader(chain));
+  assert.equal(deep.grade, "unknown");
+});
+
 test("crafted unterminated references are handled in linear time", () => {
   const config = JSON.stringify({ p: { apiKey: "${A:-".repeat(40_000) } });
   const started = performance.now();
