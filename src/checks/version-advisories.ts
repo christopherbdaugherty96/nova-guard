@@ -27,12 +27,16 @@ export const bundledAdvisories: readonly VersionAdvisory[] = [
   },
 ];
 
-// Every token that looks like a calendar version. Each must parse strictly, so
-// an unrecognized real version can never be skipped in favour of another date.
-const candidatePattern = /(?<![\w.])v?\d{4}\.\d+\.\d+[\w.+-]*/g;
+// The output is split into words of letters, digits (any script), and version
+// punctuation. Any word that looks like a calendar version must parse strictly
+// as a whole, so a real version glued to other text, written in other digits,
+// or truncated can never be skipped in favour of another date in the output.
+const wordPattern = /[\p{L}\p{N}\p{M}_.+-]+/gu;
+const looksLikeVersion = /\p{Nd}{4,}\.\p{Nd}/u;
 const strictVersion =
   /^v?(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const ansiEscape = /\x1b\[[0-9;]*m/g;
+// CSI sequences (colors, cursor and line control) and OSC sequences.
+const terminalEscape = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
 type Core = [number, number, number];
 
@@ -44,9 +48,12 @@ export function assessOpenClawVersion(
   }
 
   const found = new Map<string, { core: Core; prerelease: boolean }>();
-  const text = versionOutput.replace(ansiEscape, "");
-  for (const [candidate] of text.matchAll(candidatePattern)) {
-    const match = strictVersion.exec(candidate.replace(/\.+$/, ""));
+  const text = versionOutput.replace(terminalEscape, "");
+  for (const [word] of text.matchAll(wordPattern)) {
+    if (!looksLikeVersion.test(word)) {
+      continue;
+    }
+    const match = strictVersion.exec(trimTrailingDots(word));
     if (!match) {
       return unknown("OpenClaw version output was not recognized.");
     }
@@ -111,6 +118,14 @@ export function assessOpenClawVersion(
 
 function unknown(summary: string): VersionAdvisoryResult {
   return { grade: "unknown", version: null, advisories: [], summary };
+}
+
+function trimTrailingDots(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === ".") {
+    end -= 1;
+  }
+  return value.slice(0, end);
 }
 
 function parseCore(value: string): Core {
