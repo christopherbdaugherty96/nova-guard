@@ -267,8 +267,10 @@ by `openclaw security audit --deep`), ported unchanged with attribution in
   regular expression per alias per line; nova-guard finds the same calls in
   one pass, so a file with thousands of aliases cannot stall the scan.
 - A file reached through several skills (nested skills, symlinks into the same
-  tree) is read and scanned once. Script-file walks stop after 1,000,000
-  directory entries across all skills; the rest is unknown.
+  tree) is read and scanned once, and roots resolving to the same directory are
+  walked once. Discovery visits at most 20,000 directories per root and 200,000
+  in all; script-file walks stop after 1,000,000 directory entries across all
+  skills; whatever is left is unknown.
 
 Reports give the skill directory, file, line, rule id, and severity only:
 never the matched text (OpenClaw shows it as evidence) and never the skill's

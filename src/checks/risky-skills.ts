@@ -128,6 +128,8 @@ const maxDiscoveryDepth = 9;
 // Total script-file directory entries walked across all skills.
 const maxTotalScanEntries = 1_000_000;
 const maxDiscoveryDirsPerRoot = 20_000;
+// Directories visited across every root together.
+const defaultMaxDiscoveryDirs = 200_000;
 const maxReportedPathLength = 4096;
 
 type SymlinkPolicy = "any" | "contained" | "contained-or-allowed";
@@ -188,7 +190,9 @@ export function assessRiskySkills(
   locations: SkillLocations,
   configInput: SkillConfigInput,
   fs: SkillFs = nodeSkillFs,
+  limits: { maxDiscoveryDirs?: number } = {},
 ): RiskySkillsResult {
+  const maxDiscoveryDirs = limits.maxDiscoveryDirs ?? defaultMaxDiscoveryDirs;
   const unknown: RiskySkillsResult["unknown"] = [];
   const findings: RiskySkillFinding[] = [];
   const markUnknown = (location: string, reason: SkillUnknownReason) =>
@@ -308,11 +312,12 @@ export function assessRiskySkills(
   };
 
   const skillsByRealPath = new Map<string, string>();
+  // Roots are walked once per real directory and policy, so many links to
+  // one tree (for example, agents' workshop roots) cost one walk.
   const seenRoots = new Set<string>();
+  let totalDiscoveryDirs = 0;
   for (const root of roots) {
     const rootDir = path.resolve(root.dir);
-    if (seenRoots.has(rootDir)) continue;
-    seenRoots.add(rootDir);
     let rootReal: string;
     try {
       rootReal = fs.realpath(rootDir);
@@ -320,17 +325,20 @@ export function assessRiskySkills(
       if (!isMissing(error)) markUnknown(rootDir, "unreadable");
       continue;
     }
+    const rootKey = `${rootReal}\u0000${root.symlinks}\u0000${root.container === true}`;
+    if (seenRoots.has(rootKey)) continue;
+    seenRoots.add(rootKey);
     const visited = new Set<string>([rootReal]);
-    const queue: { dir: string; depth: number }[] = [{ dir: rootDir, depth: 0 }];
+    const queue: { dir: string; real: string; depth: number }[] = [{ dir: rootDir, real: rootReal, depth: 0 }];
     let visitedDirs = 0;
-    for (const { dir, depth } of queue) {
+    for (const { dir, real, depth } of queue) {
       visitedDirs += 1;
-      if (visitedDirs > maxDiscoveryDirsPerRoot) {
+      totalDiscoveryDirs += 1;
+      if (visitedDirs > maxDiscoveryDirsPerRoot || totalDiscoveryDirs > maxDiscoveryDirs) {
         markUnknown(rootDir, "discovery-truncated");
         break;
       }
       if (!(root.container && depth === 0) && hasSkillFile(dir)) {
-        const real = tryRealpath(dir) ?? dir;
         if (!skillsByRealPath.has(real)) skillsByRealPath.set(real, dir);
         continue;
       }
@@ -347,7 +355,8 @@ export function assessRiskySkills(
         const child = path.join(dir, entry.name);
         let childReal: string | undefined;
         if (entry.isDirectory()) {
-          childReal = tryRealpath(child);
+          // A real subdirectory of a real directory: no realpath walk needed.
+          childReal = path.join(real, entry.name);
         } else if (entry.isSymbolicLink()) {
           childReal = tryRealpath(child);
           if (childReal === undefined) continue;
@@ -367,7 +376,7 @@ export function assessRiskySkills(
         }
         if (childReal === undefined || visited.has(childReal)) continue;
         visited.add(childReal);
-        queue.push({ dir: child, depth: depth + 1 });
+        queue.push({ dir: child, real: childReal, depth: depth + 1 });
       }
     }
   }
@@ -386,8 +395,16 @@ export function assessRiskySkills(
   // A file reached through several skills (nested skills, links to the same
   // tree) is read and scanned once, keyed by its real path.
   const scanCache = new Map<string, ReturnType<typeof scanSource> | undefined>();
-  const scanOnce = (file: string, maxBytes: number, scan: (text: string) => ReturnType<typeof scanSource>) => {
-    const key = `${maxBytes}\u0000${tryRealpath(file) ?? file}`;
+  // The skill's real path is known from discovery and the walk follows no
+  // links, so <skill real path>/<relative path> names the file without a
+  // realpath call per file.
+  const scanOnce = (
+    file: string,
+    realFile: string,
+    maxBytes: number,
+    scan: (text: string) => ReturnType<typeof scanSource>,
+  ) => {
+    const key = `${maxBytes}\u0000${realFile}`;
     if (!scanCache.has(key)) {
       const text = readFor(file, maxBytes);
       scanCache.set(key, text === undefined ? undefined : scan(text));
@@ -408,10 +425,10 @@ export function assessRiskySkills(
   };
 
   let totalScanEntries = 0;
-  for (const skillDir of skillsByRealPath.values()) {
+  for (const [skillReal, skillDir] of skillsByRealPath) {
     // SKILL.md: OpenClaw applies both its skill-text and source rules.
     const skillFile = path.join(skillDir, "SKILL.md");
-    const skillHits = scanOnce(skillFile, maxSkillFileBytes, (text) => [
+    const skillHits = scanOnce(skillFile, path.join(skillReal, "SKILL.md"), maxSkillFileBytes, (text) => [
       ...scanSkillContent(text),
       ...scanSource(text),
     ]);
@@ -453,7 +470,7 @@ export function assessRiskySkills(
     }
     if (truncated) markUnknown(skillDir, "scan-truncated");
     for (const file of files.slice(0, maxScriptFiles)) {
-      const hits = scanOnce(file, maxScriptFileBytes, scanSource);
+      const hits = scanOnce(file, path.join(skillReal, path.relative(skillDir, file)), maxScriptFileBytes, scanSource);
       if (hits) report(skillDir, file, hits);
     }
   }
