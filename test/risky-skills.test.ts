@@ -496,3 +496,73 @@ test("skills reached through many links reuse scans instead of rereading files",
     assert.equal(scriptReads, 5);
   });
 });
+
+test("cached scans are keyed without resolving every file's real path", posixOnly, () => {
+  fixture((_root, at) => {
+    const managed = path.join(at.stateDir, "skills");
+    let dir = path.join(managed, "S");
+    const levels: string[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      skill(dir);
+      levels.push(dir);
+      dir = path.join(dir, "n");
+    }
+    for (let i = 0; i < 5; i += 1) write(path.join(levels.at(-1) as string, `f${i}.js`), evalJs);
+    for (let i = 1; i < 10; i += 1) symlinkSync(levels[i] as string, path.join(managed, `l${i}`));
+    let fileRealpaths = 0;
+    const counting: SkillFs = {
+      ...nodeSkillFs,
+      realpath(file) {
+        if (file.endsWith(".js") || file.endsWith("SKILL.md")) fileRealpaths += 1;
+        return nodeSkillFs.realpath(file);
+      },
+    };
+    assert.equal(assessRiskySkills(at, none, counting).grade, "critical");
+    assert.equal(fileRealpaths, 0);
+  });
+});
+
+test("roots that resolve to the same directory are walked once", posixOnly, () => {
+  fixture((root, at) => {
+    const shared = path.join(root, "shared-tree");
+    for (let i = 0; i < 50; i += 1) mkdirSync(path.join(shared, `d${i}`, "e"), { recursive: true });
+    for (let i = 0; i < 20; i += 1) {
+      const agentDir = path.join(at.stateDir, "agents", `a${i}`, "agent");
+      mkdirSync(agentDir, { recursive: true });
+      symlinkSync(shared, path.join(agentDir, "workshop-skills"));
+    }
+    let sharedListings = 0;
+    const counting: SkillFs = {
+      ...nodeSkillFs,
+      readdir(dir) {
+        if (dir.includes("workshop-skills")) sharedListings += 1;
+        return nodeSkillFs.readdir(dir);
+      },
+    };
+    assert.equal(assessRiskySkills(at, none, counting).grade, "pass");
+    assert.equal(sharedListings, 101);
+  });
+});
+
+test("discovery across all roots is bounded and the remainder is unknown", () => {
+  fixture((root, at) => {
+    const extraDirs: string[] = [];
+    for (let r = 0; r < 12; r += 1) {
+      const dir = path.join(root, `extra${r}`);
+      extraDirs.push(dir);
+      for (let i = 0; i < 20; i += 1) mkdirSync(path.join(dir, `d${i}`), { recursive: true });
+    }
+    let listings = 0;
+    const counting: SkillFs = {
+      ...nodeSkillFs,
+      readdir(dir) {
+        listings += 1;
+        return nodeSkillFs.readdir(dir);
+      },
+    };
+    const result = assessRiskySkills(at, ok({ skills: { load: { extraDirs } } }), counting, { maxDiscoveryDirs: 100 });
+    assert.ok(listings <= 110, `listings: ${listings}`);
+    assert.equal(result.grade, "unknown");
+    assert.ok(result.unknown.some((entry) => entry.reason === "discovery-truncated"));
+  });
+});
