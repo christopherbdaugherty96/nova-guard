@@ -23,8 +23,11 @@ export type SecretFileRead =
 
 export interface SecretFileReader {
   readText(file: string): SecretFileRead;
-  /** Names of real subdirectories (symlinks are not followed); [] if absent. */
-  listDirectories(dir: string): string[];
+  /**
+   * Names of real subdirectories (symlinks are not followed); [] if absent.
+   * "unreadable" when the directory exists but cannot be listed.
+   */
+  listDirectories(dir: string): string[] | "unreadable";
 }
 
 export interface SecretFinding {
@@ -135,28 +138,71 @@ function isNonSecretMarker(value: string, name: string): boolean {
   );
 }
 
-// OpenClaw substitutes only upper-case names; "$${VAR}" is an escaped literal.
-// The fallback is bounded so unterminated input cannot cause quadratic scans.
-const envReference = /(?<!\$)\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]{0,512}))?\}/g;
 // Scheme words that may precede a reference, as in "Bearer ${TOKEN}".
 const authScheme = /^(?:bearer|basic|token)$/i;
+const referenceName = /^[A-Z_][A-Z0-9_]*/;
+
+interface ParsedReferences {
+  references: { name: string; fallback?: string }[];
+  /** The value with every reference removed. */
+  literal: string;
+}
+
+/**
+ * Finds OpenClaw env references in one linear pass: "${NAME}" or
+ * "${NAME:-fallback}", upper-case names only, with "$${...}" an escaped
+ * literal. Fallbacks have no length cap (a JWT or certificate can be long).
+ */
+function parseReferences(value: string): ParsedReferences {
+  const references: ParsedReferences["references"] = [];
+  let literal = "";
+  let index = 0;
+  while (index < value.length) {
+    const start = value.indexOf("${", index);
+    if (start === -1) break;
+    if (start > 0 && value[start - 1] === "$") {
+      literal += value.slice(index, start + 2);
+      index = start + 2;
+      continue;
+    }
+    const name = referenceName.exec(value.slice(start + 2, start + 2 + 256))?.[0];
+    const afterName = start + 2 + (name?.length ?? 0);
+    // Search for "}" only after ":-", and stop once none remains, so every
+    // character is scanned a bounded number of times.
+    let close = -1;
+    if (name !== undefined && value[afterName] === "}") {
+      close = afterName;
+      references.push({ name });
+    } else if (name !== undefined && value.startsWith(":-", afterName)) {
+      close = value.indexOf("}", afterName + 2);
+      if (close === -1) break;
+      references.push({ name, fallback: value.slice(afterName + 2, close) });
+    } else {
+      literal += value.slice(index, start + 2);
+      index = start + 2;
+      continue;
+    }
+    literal += value.slice(index, start);
+    index = close + 1;
+  }
+  return { references, literal: literal + value.slice(index) };
+}
 
 function classifyValue(value: string, name: string): SecretFinding["kind"] | undefined {
   const keyIsSecret = isSecretLikeName(name);
-  let hasReference = false;
-  for (const [, variable, fallback] of value.matchAll(envReference)) {
-    hasReference = true;
-    if (fallback !== undefined && fallback.length > 0 && (keyIsSecret || isSecretLikeName(variable!))) {
+  const { references, literal } = parseReferences(value);
+  for (const { name: variable, fallback } of references) {
+    if (fallback !== undefined && fallback.length > 0 && (keyIsSecret || isSecretLikeName(variable))) {
       return "fallback";
     }
   }
   if (!keyIsSecret || value.trim().length === 0 || isNonSecretMarker(value, name)) {
     return undefined;
   }
-  // A value made only of references (optionally after an auth scheme) holds no
-  // secret; any other literal text around a reference is still plaintext.
-  const literal = value.replace(envReference, "").replace(/[\s:]+/g, " ").trim();
-  if (hasReference && (literal.length === 0 || authScheme.test(literal))) {
+  // A value made only of references (optionally after an auth scheme and ":"
+  // separators) holds no secret; any other literal text is still plaintext.
+  const remainder = literal.replace(/[\s:]+/g, " ").trim();
+  if (references.length > 0 && (remainder.length === 0 || authScheme.test(remainder))) {
     return undefined;
   }
   return "plaintext";
@@ -291,14 +337,12 @@ function scanModelsJson(file: string, parsed: unknown): SecretFinding[] {
   for (const [providerId, provider] of Object.entries(providers)) {
     if (provider === null || typeof provider !== "object") continue;
     const { apiKey, headers } = provider as { apiKey?: unknown; headers?: unknown };
-    if (typeof apiKey === "string" && classifyValue(apiKey, "apiKey") !== undefined) {
-      findings.push(finding("plaintext", file, ["providers", providerId, "apiKey"]));
-    }
+    const apiKeyKind = typeof apiKey === "string" ? classifyValue(apiKey, "apiKey") : undefined;
+    if (apiKeyKind) findings.push(finding(apiKeyKind, file, ["providers", providerId, "apiKey"]));
     if (headers === null || typeof headers !== "object") continue;
     for (const [header, value] of Object.entries(headers)) {
-      if (typeof value === "string" && classifyValue(value, header) !== undefined) {
-        findings.push(finding("plaintext", file, ["providers", providerId, "headers", header]));
-      }
+      const kind = typeof value === "string" ? classifyValue(value, header) : undefined;
+      if (kind) findings.push(finding(kind, file, ["providers", providerId, "headers", header]));
     }
   }
   return findings;
@@ -355,12 +399,14 @@ export function assessPlaintextSecrets(
   });
 
   const agentsRoot = path.join(locations.stateDir, "agents");
+  const agents = reader.listDirectories(agentsRoot);
+  // Other agents' models.json files cannot be found, so secrets cannot be ruled out.
+  if (agents === "unreadable") unreadable.push(sanitize(agentsRoot));
   const modelsFiles = unique([
     path.join(agentsRoot, "main", "agent", "models.json"),
-    ...reader
-      .listDirectories(agentsRoot)
-      .sort()
-      .map((agent) => path.join(agentsRoot, agent, "agent", "models.json")),
+    ...(agents === "unreadable" ? [] : [...agents].sort()).map((agent) =>
+      path.join(agentsRoot, agent, "agent", "models.json"),
+    ),
   ]);
   for (const file of modelsFiles) {
     read(file, (text) => {
@@ -420,8 +466,9 @@ export const nodeSecretFileReader: SecretFileReader = {
         .filter((entry) => entry.isDirectory())
         .map((entry) => entry.name)
         .sort();
-    } catch {
-      return [];
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === "ENOENT" || code === "ENOTDIR" ? [] : "unreadable";
     }
   },
 };

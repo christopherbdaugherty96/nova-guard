@@ -139,7 +139,9 @@ scanner reads, never writes:
 - `<stateDir>/agents/*/agent/models.json` (always including `main`):
   `providers.*.apiKey` unless it is one of OpenClaw's non-secret markers
   (`src/agents/model-auth-markers.ts`), and `providers.*.headers.*` whose name
-  is sensitive (`src/secrets/model-provider-header-policy.ts`).
+  is sensitive (`src/secrets/model-provider-header-policy.ts`). If the
+  `agents` directory exists but cannot be listed, the result is `unknown`,
+  because other agents' files could not be checked.
 - Secret-like names use OpenClaw's own conservative fragments (`api-key`,
   `apikey`, `token`, `secret`, `password`, `credential`, plus
   `authorization`), after camelCase and `_`/`.` are normalized to dashes, so
