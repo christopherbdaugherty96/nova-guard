@@ -56,6 +56,11 @@ Sources:
 - The exact `openclaw --version` output format is not documented, so the
   scanner extracts a single `YYYY.M.D[-prerelease]` token and reports
   `unknown` when none, or more than one distinct version, is present.
+- Every word in the output that resembles a calendar version must parse
+  strictly, so a malformed real version cannot be skipped in favour of a build
+  date. Output over 4 KiB is reported as `unknown`. Separators the parser does
+  not treat as version text (for example fullwidth dots or zero-width spaces)
+  are a documented limit: a binary that emits them already controls the host.
 
 Sources:
 

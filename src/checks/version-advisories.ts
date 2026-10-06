@@ -32,9 +32,11 @@ export const bundledAdvisories: readonly VersionAdvisory[] = [
 // as a whole, so a real version glued to other text, written in other digits,
 // or truncated can never be skipped in favour of another date in the output.
 const wordPattern = /[\p{L}\p{N}\p{M}_.+-]+/gu;
-const looksLikeVersion = /\p{Nd}{4,}\.\p{Nd}/u;
+const looksLikeVersion = /(?<!\p{Nd})\p{Nd}{4,}\.\p{Nd}/u;
+/** Version output is one short line; anything far larger is not trusted. */
+const maxOutputLength = 4096;
 const strictVersion =
-  /^v?(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+  /^(?:[A-Za-z][A-Za-z0-9]*-)?v?(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 // CSI sequences (colors, cursor and line control) and OSC sequences.
 const terminalEscape = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
@@ -45,6 +47,9 @@ export function assessOpenClawVersion(
 ): VersionAdvisoryResult {
   if (versionOutput === undefined || versionOutput.trim().length === 0) {
     return unknown("OpenClaw version could not be read.");
+  }
+  if (versionOutput.length > maxOutputLength) {
+    return unknown("OpenClaw version output was too long to trust.");
   }
 
   const found = new Map<string, { core: Core; prerelease: boolean }>();
