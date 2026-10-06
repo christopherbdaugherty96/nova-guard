@@ -53,21 +53,22 @@ Sources:
   as affected and `2026.1.29` as patched.
 - The vulnerability list will be bundled and dated. A local scan does not need
   live advisory access.
-- The exact `openclaw --version` output format is not documented, so the
-  scanner extracts a single `YYYY.M.D[-prerelease]` token and reports
-  `unknown` when none, or more than one distinct version, is present.
+- `openclaw --version` prints one line on stdout. Older releases print the
+  bare version (verified at `v2026.1.24`, published as `clawdbot`
+  `2026.1.24-0`, and at `v2026.1.29` and `v2026.1.30`). Current `main` prints `OpenClaw <version>` or
+  `OpenClaw <version> (<7-hex commit>)`; on failure they write to stderr and
+  exit 1. The scanner grades only output whose entire trimmed text, after
+  stripping terminal escapes, is one of these shapes. Anything else, including
+  other date-like text, is `unknown`. Output over 4 KiB is `unknown`.
 - Versions are `YYYY.M.N`. `N` is usually the day, but Extended Stable releases
   use it as a maintenance counter (official tags `v2026.6.33` to `v2026.8.35`),
   so the scanner enforces only month 1-12 and a non-zero `N` of any length.
-- Every word in the output that resembles a calendar version must parse
-  strictly, so a malformed real version cannot be skipped in favour of a build
-  date. Output over 4 KiB is reported as `unknown`. Separators the parser does
-  not treat as version text (for example fullwidth dots or zero-width spaces)
-  are a documented limit: a binary that emits them already controls the host.
 
 Sources:
 
 - <https://github.com/openclaw/openclaw/blob/main/docs/platforms/windows.md>
+- <https://github.com/openclaw/openclaw/blob/main/src/entry.version-fast-path.ts>
+- <https://github.com/openclaw/openclaw/blob/v2026.1.24/src/cli/program/help.ts>
 - <https://github.com/advisories/GHSA-g8p2-7wf7-98mq>
 
 ## Secrets

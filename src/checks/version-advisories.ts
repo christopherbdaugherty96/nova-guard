@@ -27,19 +27,21 @@ export const bundledAdvisories: readonly VersionAdvisory[] = [
   },
 ];
 
-// The output is split into words of letters, digits (any script), and version
-// punctuation. Any word that looks like a calendar version must parse strictly
-// as a whole, so a real version glued to other text, written in other digits,
-// or truncated can never be skipped in favour of another date in the output.
-const wordPattern = /[\p{L}\p{N}\p{M}_.+-]+/gu;
-// A four-digit run followed by a dot starts a version, even when truncated.
-const looksLikeVersion = /(?<!\p{Nd})\p{Nd}{4,}\./u;
 /** Version output is one short line; anything far larger is not trusted. */
 const maxOutputLength = 4096;
-const strictVersion =
-  /^(?:[A-Za-z][A-Za-z0-9]*-)?v?(\d{4})\.(\d{1,2})\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 // CSI sequences (colors, cursor and line control) and OSC sequences.
 const terminalEscape = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const versionPattern =
+  "(\\d{4})\\.(\\d{1,2})\\.(\\d+)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+/**
+ * The whole output must be one of the line shapes OpenClaw is verified to
+ * print for `--version`, so no other date-like text can stand in for it:
+ * - the bare version (commander default, clawdbot through 2026.1.x);
+ * - `OpenClaw <version>` or `OpenClaw <version> (<commit>)` (current CLI).
+ */
+const versionLine = new RegExp(
+  `^(?:${versionPattern}|OpenClaw ${versionPattern}(?: \\([0-9a-f]{7,40}\\))?)$`,
+);
 
 // BigInt keeps arbitrarily long maintenance counters exact.
 type Core = [bigint, bigint, bigint];
@@ -54,33 +56,21 @@ export function assessOpenClawVersion(
     return unknown("OpenClaw version output was too long to trust.");
   }
 
-  const found = new Map<string, { core: Core; prerelease: boolean }>();
-  const text = versionOutput.replace(terminalEscape, "");
-  for (const [word] of text.matchAll(wordPattern)) {
-    if (!looksLikeVersion.test(word)) {
-      continue;
-    }
-    const match = strictVersion.exec(trimTrailingDots(word));
-    if (!match) {
-      return unknown("OpenClaw version output was not recognized.");
-    }
-    const [, year, month, day, prerelease] = match;
-    const core: Core = [BigInt(year), BigInt(month), BigInt(day)];
-    if (!isReleaseVersion(core)) {
-      return unknown("OpenClaw version output was not recognized.");
-    }
-    const label = `${core.join(".")}${prerelease ? `-${prerelease}` : ""}`;
-    found.set(label, { core, prerelease: prerelease !== undefined });
-  }
-
-  if (found.size === 0) {
+  const line = versionOutput.replace(terminalEscape, "").trim();
+  const match = versionLine.exec(line);
+  if (!match) {
     return unknown("OpenClaw version output was not recognized.");
   }
-  if (found.size > 1) {
-    return unknown("OpenClaw version output contained conflicting versions.");
+  // Groups 1-4 hold the bare form; groups 5-8 hold the "OpenClaw" form.
+  const [year, month, counter, prereleaseTag] =
+    match[1] !== undefined ? match.slice(1, 5) : match.slice(5, 9);
+  const core: Core = [BigInt(year), BigInt(month), BigInt(counter)];
+  if (!isReleaseVersion(core)) {
+    return unknown("OpenClaw version output was not recognized.");
   }
+  const prerelease = prereleaseTag !== undefined;
+  const version = `${core.join(".")}${prerelease ? `-${prereleaseTag}` : ""}`;
 
-  const [[version, { core, prerelease }]] = found;
   // An inclusive upper bound covers prereleases of that release and earlier.
   const matched = bundledAdvisories.filter(
     (advisory) => compareCore(core, parseCore(advisory.affectedThrough)) <= 0,
@@ -137,14 +127,6 @@ function unknown(summary: string): VersionAdvisoryResult {
  */
 function isReleaseVersion([, month, counter]: Core): boolean {
   return month >= 1n && month <= 12n && counter >= 1n;
-}
-
-function trimTrailingDots(value: string): string {
-  let end = value.length;
-  while (end > 0 && value[end - 1] === ".") {
-    end -= 1;
-  }
-  return value.slice(0, end);
 }
 
 function parseCore(value: string): Core {
