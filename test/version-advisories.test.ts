@@ -1,12 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import semver from "semver";
+
 import {
   advisoryDataDate,
-  assessOpenClawVersion,
+  bundledAdvisories,
+} from "../src/data/openclaw-advisories.js";
+import {
+  assessOpenClawVersion as assessWithBundle,
+  type BundledAdvisory,
 } from "../src/checks/version-advisories.js";
 
-const cve = "CVE-2026-25253";
+const g8p2 = "GHSA-g8p2-7wf7-98mq";
+const fixture: readonly BundledAdvisory[] = [
+  {
+    ghsa: g8p2,
+    package: "clawdbot",
+    severity: "high",
+    vulnerableVersions: "<=2026.1.28",
+    title: "Fixture: token exfiltration (CVE-2026-25253)",
+  },
+  {
+    ghsa: "GHSA-0000-0000-0001",
+    package: "openclaw",
+    severity: "low",
+    vulnerableVersions: ">=2026.6.1 <2026.6.5",
+    title: "Fixture: low-severity issue",
+  },
+];
+const assessOpenClawVersion = (output: string | undefined) =>
+  assessWithBundle(output, fixture, "2026-10-06");
 const notRecognized = {
   grade: "unknown",
   version: null,
@@ -19,12 +43,23 @@ const notRecognized = {
 // - current main (entry.version-fast-path.ts, cli/program/help.ts):
 //   "OpenClaw <version>" or "OpenClaw <version> (<7-hex commit>)".
 
-test("last affected release is critical for CVE-2026-25253", () => {
+test("a release matching a high-severity advisory is critical", () => {
   assert.deepEqual(assessOpenClawVersion("2026.1.28\n"), {
     grade: "critical",
     version: "2026.1.28",
-    advisories: [cve],
-    summary: `OpenClaw 2026.1.28 is affected by ${cve}; upgrade to 2026.1.29 or later.`,
+    advisories: [g8p2],
+    summary:
+      "OpenClaw 2026.1.28 matches 1 known advisory (1 critical or high); upgrade to a current release.",
+  });
+});
+
+test("a release matching only low or moderate advisories is a warning", () => {
+  assert.deepEqual(assessOpenClawVersion("OpenClaw 2026.6.3"), {
+    grade: "warning",
+    version: "2026.6.3",
+    advisories: ["GHSA-0000-0000-0001"],
+    summary:
+      "OpenClaw 2026.6.3 matches 1 known advisory (moderate or low); upgrade to a current release.",
   });
 });
 
@@ -34,12 +69,12 @@ test("clawdbot-era bare prerelease-style version is critical", () => {
   assert.equal(result.version, "2026.1.24-0");
 });
 
-test("first patched release passes against bundled advisories", () => {
+test("a release outside every advisory range passes with the data date", () => {
   assert.deepEqual(assessOpenClawVersion("2026.1.29"), {
     grade: "pass",
     version: "2026.1.29",
     advisories: [],
-    summary: `OpenClaw 2026.1.29 matches no bundled advisory (data as of ${advisoryDataDate}).`,
+    summary: "OpenClaw 2026.1.29 matches no bundled advisory (data as of 2026-10-06).",
   });
 });
 
@@ -59,19 +94,11 @@ test("an earlier year is affected", () => {
   assert.equal(assessOpenClawVersion("2025.12.31").grade, "critical");
 });
 
-test("a prerelease of an affected release is affected", () => {
+test("prereleases are judged by SemVer precedence, not skipped", () => {
   const result = assessOpenClawVersion("OpenClaw 2026.1.28-beta.1");
   assert.equal(result.grade, "critical");
   assert.equal(result.version, "2026.1.28-beta.1");
-});
-
-test("a prerelease of the first patched release is unknown", () => {
-  assert.deepEqual(assessOpenClawVersion("2026.1.29-beta.1"), {
-    grade: "unknown",
-    version: "2026.1.29-beta.1",
-    advisories: [],
-    summary: `OpenClaw 2026.1.29-beta.1 is a prerelease of the first release patched for ${cve}; the fix cannot be confirmed.`,
-  });
+  assert.equal(assessOpenClawVersion("2026.6.5-beta.1").grade, "warning");
 });
 
 test("ANSI and other terminal escapes do not hide the version", () => {
@@ -98,11 +125,10 @@ test("maintenance counters are not limited to two digits", () => {
   assert.equal(assessOpenClawVersion("2025.12.100").grade, "critical");
 });
 
-test("very long counters are compared without precision loss", () => {
-  const long = `2026.6.${"9".repeat(400)}`;
-  const result = assessOpenClawVersion(long);
-  assert.equal(result.grade, "pass");
-  assert.equal(result.version, long);
+test("counters too large to compare with advisory ranges are unknown", () => {
+  for (const input of [`2026.6.${"9".repeat(400)}`, "2026.1.9007199254740993"]) {
+    assert.deepEqual(assessOpenClawVersion(input), notRecognized, input);
+  }
 });
 
 test("output that does not say it is the installed version is unknown", () => {
@@ -182,4 +208,28 @@ test("missing version output is unknown, not pass", () => {
       summary: "OpenClaw version could not be read.",
     });
   }
+});
+
+test("bundled data is dated, well-formed, and parseable", () => {
+  assert.match(advisoryDataDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(bundledAdvisories.length > 0);
+  for (const advisory of bundledAdvisories) {
+    assert.match(advisory.ghsa, /^GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}$/);
+    assert.ok(["openclaw", "clawdbot", "moltbot"].includes(advisory.package));
+    assert.ok(["critical", "high", "moderate", "low"].includes(advisory.severity));
+    assert.ok(semver.validRange(advisory.vulnerableVersions), advisory.vulnerableVersions);
+  }
+});
+
+test("bundled data includes CVE-2026-25253 and the 2026.2.1 authorization bypass", () => {
+  const critical = assessWithBundle("2026.1.28");
+  assert.equal(critical.grade, "critical");
+  assert.ok(critical.advisories.includes(g8p2));
+  const later = assessWithBundle("OpenClaw 2026.1.30");
+  assert.equal(later.grade, "critical");
+  assert.ok(later.advisories.includes("GHSA-fhvm-j76f-qmjv"));
+});
+
+test("a current release passes against the bundled data", () => {
+  assert.equal(assessWithBundle("OpenClaw 2026.9.8 (282f796)").grade, "pass");
 });
