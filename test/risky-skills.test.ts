@@ -628,3 +628,48 @@ test("time spent resolving discovery symlinks is bounded, failed resolutions inc
     assert.deepEqual(result.unknown, [{ path: managed, reason: "discovery-truncated" }]);
   });
 });
+
+test("walks run on resolved real paths, while reports keep the discovered paths", posixOnly, () => {
+  fixture((root, at) => {
+    const target = path.join(root, "elsewhere");
+    const real = path.join(target, "tool");
+    skill(real, undefined, { "lib/x.js": evalJs });
+    const managed = path.join(at.stateDir, "skills");
+    symlinkSync(target, managed);
+    const throughLink: string[] = [];
+    const watch = (file: string) => {
+      if (file.startsWith(managed)) throughLink.push(file);
+    };
+    const watching: SkillFs = {
+      ...nodeSkillFs,
+      lstat: (file) => (watch(file), nodeSkillFs.lstat(file)),
+      readdir: (dir) => (watch(dir), nodeSkillFs.readdir(dir)),
+      readText: (file, max) => (watch(file), nodeSkillFs.readText(file, max)),
+    };
+    const result = assessRiskySkills(at, none, watching);
+    assert.deepEqual(throughLink, []);
+    assert.deepEqual(rules(result), [`critical dynamic-code-execution ${path.join(managed, "tool", "lib", "x.js")}:2`]);
+  });
+});
+
+test("the whole assessment has a time limit; past it the result is unknown, never pass", () => {
+  fixture((_root, at) => {
+    for (let i = 0; i < 6; i += 1) skill(path.join(at.stateDir, "skills", `s${i}`), undefined, { "x.js": "export {};\n" });
+    let clock = 0;
+    const slow: SkillFs = {
+      ...nodeSkillFs,
+      readdir(dir) {
+        clock += 1000;
+        return nodeSkillFs.readdir(dir);
+      },
+      realpath(file) {
+        clock += 1000;
+        return nodeSkillFs.realpath(file);
+      },
+    };
+    const result = assessRiskySkills(at, none, slow, { maxMillis: 5000, now: () => clock });
+    assert.equal(result.grade, "unknown");
+    assert.ok(result.unknown.some((entry) => entry.reason === "time-limit"), JSON.stringify(result.unknown));
+    assert.ok(clock <= 8000, `clock: ${clock}`);
+  });
+});
