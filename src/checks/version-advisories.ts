@@ -64,6 +64,9 @@ export function assessOpenClawVersion(
     }
     const [, year, month, day, prerelease] = match;
     const core: Core = [Number(year), Number(month), Number(day)];
+    if (!isCalendarDate(core)) {
+      return unknown("OpenClaw version output was not recognized.");
+    }
     const label = `${core.join(".")}${prerelease ? `-${prerelease}` : ""}`;
     found.set(label, { core, prerelease: prerelease !== undefined });
   }
@@ -123,6 +126,15 @@ export function assessOpenClawVersion(
 
 function unknown(summary: string): VersionAdvisoryResult {
   return { grade: "unknown", version: null, advisories: [], summary };
+}
+
+function isCalendarDate([year, month, day]: Core): boolean {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
 }
 
 function trimTrailingDots(value: string): string {
