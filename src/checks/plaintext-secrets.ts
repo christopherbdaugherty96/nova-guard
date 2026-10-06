@@ -337,9 +337,14 @@ function walkValues(node: unknown, segments: string[], name: string, visit: Visi
   return true;
 }
 
-function scanConfig(file: string, parsed: unknown): SecretFinding[] | undefined {
+function scanConfig(
+  file: string,
+  parsed: unknown,
+  prefix: string[] = [],
+  rootName = "",
+): SecretFinding[] | undefined {
   const findings: SecretFinding[] = [];
-  const complete = walkValues(parsed, [], "", (value, segments, name) => {
+  const complete = walkValues(parsed, prefix, rootName, (value, segments, name) => {
     if (typeof value === "number") {
       if (isNumericSecretName(name)) findings.push(finding("plaintext", file, segments));
       return;
@@ -350,20 +355,28 @@ function scanConfig(file: string, parsed: unknown): SecretFinding[] | undefined 
   return complete ? findings : undefined;
 }
 
-/** Every "$include" path in a document, in order (string or array of strings). */
-function listIncludes(node: unknown, found: string[] = [], depth = 0): string[] {
-  if (depth > maxDepth || node === null || typeof node !== "object") return found;
+interface IncludeSite {
+  target: string;
+  /** Logical config path of the object holding "$include". */
+  segments: string[];
+  /** The key that governs the included content (its parent's key). */
+  name: string;
+}
+
+/** Every "$include" in a document, in order, with where it is included. */
+function listIncludes(node: unknown, segments: string[] = [], name = "", found: IncludeSite[] = []): IncludeSite[] {
+  if (segments.length > maxDepth || node === null || typeof node !== "object") return found;
   if (Array.isArray(node)) {
-    for (const item of node) listIncludes(item, found, depth + 1);
+    node.forEach((item, index) => listIncludes(item, [...segments, String(index)], name, found));
     return found;
   }
   for (const [key, value] of Object.entries(node)) {
     if (key === includeKey) {
       for (const item of Array.isArray(value) ? value : [value]) {
-        if (typeof item === "string") found.push(item);
+        if (typeof item === "string") found.push({ target: item, segments, name });
       }
     } else {
-      listIncludes(value, found, depth + 1);
+      listIncludes(value, [...segments, key], key, found);
     }
   }
   return found;
@@ -449,36 +462,55 @@ export function assessPlaintextSecrets(
       const relative = path.relative(root, file);
       return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
     });
-  const visitedConfigs = new Set<string>();
-  const scanConfigFile = (file: string, depth: number) => {
-    if (visitedConfigs.has(path.resolve(file))) return;
-    visitedConfigs.add(path.resolve(file));
-    const includes: string[] = [];
+  // A file is rescanned when a shallower include reaches it, so coverage does
+  // not depend on traversal order; deeper or equal revisits (cycles) stop.
+  const shallowestDepth = new Map<string, number>();
+  const tooDeep: string[] = [];
+  const scanConfigFile = (file: string, depth: number, prefix: string[], name: string) => {
+    const key = path.resolve(file);
+    const previous = shallowestDepth.get(key);
+    if (previous !== undefined && previous <= depth) return;
+    shallowestDepth.set(key, depth);
+    if (previous !== undefined) {
+      // The shallower scan replaces the earlier one's results for this file.
+      const reported = sanitize(file);
+      for (let index = findings.length - 1; index >= 0; index -= 1) {
+        if (findings[index]!.file === reported) findings.splice(index, 1);
+      }
+    }
+    const includes: IncludeSite[] = [];
     read(
       file,
       (text) => {
         const parsed = parse(text);
         if (parsed === undefined) return undefined;
-        for (const include of listIncludes(parsed)) {
-          const target = path.isAbsolute(include)
-            ? path.normalize(include)
-            : path.resolve(path.dirname(file), include);
-          if (insideIncludeRoot(target)) includes.push(target);
+        for (const site of listIncludes(parsed)) {
+          const target = path.isAbsolute(site.target)
+            ? path.normalize(site.target)
+            : path.resolve(path.dirname(file), site.target);
+          if (insideIncludeRoot(target)) {
+            // Included content sits at the site's logical path, under its key.
+            includes.push({ target, segments: [...prefix, ...site.segments], name: site.segments.length > 0 ? site.name : name });
+          }
         }
-        return scanConfig(file, parsed);
+        return scanConfig(file, parsed, prefix, name);
       },
       depth > 0,
     );
-    for (const target of includes) {
+    for (const site of includes) {
       if (depth + 1 > maxIncludeDepth) {
-        // OpenClaw rejects deeper nesting; the file cannot be ruled out here.
-        if (!visitedConfigs.has(path.resolve(target))) unreadable.push(sanitize(target));
+        // OpenClaw rejects deeper nesting; unless another route reaches it,
+        // the file cannot be ruled out.
+        tooDeep.push(site.target);
         continue;
       }
-      scanConfigFile(target, depth + 1);
+      scanConfigFile(site.target, depth + 1, site.segments, site.name);
     }
   };
-  scanConfigFile(locations.configPath, 0);
+  scanConfigFile(locations.configPath, 0, [], "");
+  for (const target of tooDeep) {
+    if (!shallowestDepth.has(path.resolve(target))) unreadable.push(sanitize(target));
+  }
 
   const agentsRoot = path.join(locations.stateDir, "agents");
   const agents = reader.listDirectories(agentsRoot);
@@ -496,6 +528,11 @@ export function assessPlaintextSecrets(
       return parsed === undefined ? undefined : scanModelsJson(file, parsed);
     });
   }
+
+  // A rescanned include file is listed once.
+  const dedupe = (items: string[]) => [...new Set(items)];
+  unreadable.splice(0, unreadable.length, ...dedupe(unreadable));
+  scanned.splice(0, scanned.length, ...dedupe(scanned));
 
   const files = new Set(findings.map((item) => item.file)).size;
   const unreadableNote =

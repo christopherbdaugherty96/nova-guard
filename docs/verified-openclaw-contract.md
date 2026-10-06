@@ -141,8 +141,13 @@ scanner reads, never writes:
   (`src/config/includes.ts`, `src/config/includes-scan.ts`): paths resolve
   against the including file, must stay inside the config directory or an
   `OPENCLAW_INCLUDE_ROOTS` root (others are refused by OpenClaw and are never
-  read), and nest at most 10 deep. Each file is scanned once, so cycles end. A
-  missing, unreadable, unparseable, or too-deep include is `unknown`. The
+  read), and nest at most 10 deep. Included content sits at its include site,
+  so it inherits that site's logical path and governing key (an included bare
+  string under `token` is a token), and findings show the logical path. A file
+  is rescanned only when a shallower include reaches it, so cycles end and
+  coverage does not depend on traversal order. A missing, unreadable,
+  unparseable, or too-deep include (one no shallower route reaches) is
+  `unknown`. The
   check is lexical; OpenClaw's extra symlink-realpath check is not repeated,
   so an in-root symlink may be scanned even if OpenClaw would refuse it.
 - `<stateDir>/agents/*/agent/models.json` (always including `main`):
