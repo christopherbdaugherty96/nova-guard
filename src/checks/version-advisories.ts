@@ -27,8 +27,8 @@ export const bundledAdvisories: readonly VersionAdvisory[] = [
   },
 ];
 
-/** Version output is one short line; anything far larger is not trusted. */
-const maxOutputLength = 4096;
+/** Version output is one short line; more than 4 KiB of UTF-8 is not trusted. */
+const maxOutputBytes = 4096;
 // CSI sequences (colors, cursor and line control) and OSC sequences.
 const terminalEscape = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 // SemVer-canonical numbers: no leading zeros in the year, month, counter, or
@@ -58,7 +58,7 @@ export function assessOpenClawVersion(
   if (versionOutput === undefined || versionOutput.trim().length === 0) {
     return unknown("OpenClaw version could not be read.");
   }
-  if (versionOutput.length > maxOutputLength) {
+  if (Buffer.byteLength(versionOutput, "utf8") > maxOutputBytes) {
     return unknown("OpenClaw version output was too long to trust.");
   }
 

@@ -60,7 +60,8 @@ Sources:
   lowercase hex digits); on failure they write to stderr and
   exit 1. The scanner grades only output whose entire trimmed text, after
   stripping terminal escapes, is one of these shapes. Anything else, including
-  other date-like text, is `unknown`. Output over 4 KiB is `unknown`.
+  other date-like text, is `unknown`. Output over 4 KiB of UTF-8 (measured
+  before escapes are stripped) is `unknown`.
 - Versions are `YYYY.M.N`. `N` is usually the day, but Extended Stable releases
   use it as a maintenance counter (official tags `v2026.6.33` to `v2026.8.35`),
   so the scanner enforces only month 1-12 and a non-zero `N` of any length.
