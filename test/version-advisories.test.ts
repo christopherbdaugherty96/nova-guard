@@ -132,8 +132,8 @@ test("an update notice alongside the installed version is unknown", () => {
   );
 });
 
-test("impossible calendar dates are unknown, not pass", () => {
-  for (const input of ["2026.13.1", "2026.99.99", "2026.0.1", "2026.2.30", "2026.1.0"]) {
+test("impossible month or zero components are unknown, not pass", () => {
+  for (const input of ["2026.13.1", "2026.99.99", "2026.0.1", "2026.1.0"]) {
     assert.deepEqual(
       assessOpenClawVersion(input),
       {
@@ -145,7 +145,13 @@ test("impossible calendar dates are unknown, not pass", () => {
       input,
     );
   }
-  assert.equal(assessOpenClawVersion("2028.2.29").grade, "pass");
+});
+
+test("Extended Stable maintenance counters above 31 are valid releases", () => {
+  // Official tags such as v2026.6.35 use the third component as a counter.
+  const result = assessOpenClawVersion("2026.6.35");
+  assert.equal(result.grade, "pass");
+  assert.equal(result.version, "2026.6.35");
 });
 
 test("missing version output is unknown, not pass", () => {
