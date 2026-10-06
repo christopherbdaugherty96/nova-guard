@@ -753,3 +753,67 @@ test("the real file reader is read-only and reports missing, ok, and oversized f
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("$include fan-out is bounded and the unscanned remainder is not ruled out", () => {
+  // Each file includes the next one under four keys: 4^10 visits unbounded.
+  const files: Record<string, string> = {};
+  const file = (i: number) => (i === 0 ? configPath : path.join(stateDir, `f${i}.json5`));
+  for (let i = 0; i <= 10; i += 1) {
+    const next = JSON.stringify(`./f${i + 1}.json5`);
+    const sites = i < 10 ? [0, 1, 2, 3].map((k) => `k${k}: { $include: ${next} }`).join(", ") : "";
+    files[file(i)] = `{ ${sites}${sites ? ", " : ""}gateway: { auth: { token: "${SECRET_A}" } } }`;
+  }
+  let reads = 0;
+  const base = fakeReader(files);
+  const reader: SecretFileReader = {
+    readText(name) {
+      reads += 1;
+      return base.readText(name);
+    },
+    listDirectories: base.listDirectories,
+  };
+  const started = performance.now();
+  const result = assessPlaintextSecrets(locations, reader);
+  assert.ok(performance.now() - started < 2000);
+  assert.ok(reads < 1000, `reads: ${reads}`);
+  assert.ok(result.findings.length < 1000, `findings: ${result.findings.length}`);
+  assert.equal(result.grade, "warning");
+  assert.ok(result.unreadable.length > 0, "the unscanned remainder is not ruled out");
+  assertNoLeak(result);
+});
+
+test("credential fields OpenClaw audits without a secret-like fragment are reported", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [configPath]: `{
+        channels: {
+          feishu: { encryptKey: "letmein", accounts: { work: { encryptKey: "letmein" } } },
+          googlechat: { serviceAccount: "{\\"private_key\\":\\"letmein\\"}" },
+          buzz: { authTag: "letmein" },
+        },
+        models: { providers: { p: { request: { tls: { passphrase: "letmein" }, proxy: { tls: { passphrase: "letmein" } } } } } },
+      }`,
+    }),
+  );
+  assert.deepEqual(keys(result), [
+    `plaintext ${configPath} channels.feishu.encryptKey`,
+    `plaintext ${configPath} channels.feishu.accounts.*.encryptKey`,
+    `plaintext ${configPath} channels.googlechat.serviceAccount`,
+    `plaintext ${configPath} channels.*.authTag`,
+    `plaintext ${configPath} models.providers.*.request.tls.passphrase`,
+    `plaintext ${configPath} models.providers.*.request.proxy.tls.passphrase`,
+  ]);
+  assertNoLeak(result, ["letmein"]);
+});
+
+test("a secretref-env marker exempts only a bare variable name", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [configPath]: `{ gateway: { auth: { token: "secretref-env:X letmein" } }, hooks: { token: "secretref-env:HOOKS_TOKEN" } }`,
+    }),
+  );
+  assert.deepEqual(keys(result), [`plaintext ${configPath} gateway.auth.token`]);
+  assertNoLeak(result, ["letmein"]);
+});
