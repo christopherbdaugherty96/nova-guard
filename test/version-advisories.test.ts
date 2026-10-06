@@ -86,6 +86,27 @@ test("long runs of dots are handled in linear time", () => {
   assert.ok(performance.now() - started < 250);
 });
 
+test("long digit runs are handled in linear time", () => {
+  const started = performance.now();
+  assessOpenClawVersion("1".repeat(4_000));
+  assert.ok(performance.now() - started < 250);
+});
+
+test("oversized version output is unknown", () => {
+  assert.deepEqual(assessOpenClawVersion(`2026.9.2 ${"x".repeat(5_000)}`), {
+    grade: "unknown",
+    version: null,
+    advisories: [],
+    summary: "OpenClaw version output was too long to trust.",
+  });
+});
+
+test("a hyphenated package-name prefix is recognized", () => {
+  const result = assessOpenClawVersion("openclaw-2026.1.28");
+  assert.equal(result.grade, "critical");
+  assert.equal(result.version, "2026.1.28");
+});
+
 test("ANSI color codes do not hide the version", () => {
   const result = assessOpenClawVersion("\x1b[32m2026.1.28\x1b[0m");
   assert.equal(result.grade, "critical");
