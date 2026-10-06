@@ -79,7 +79,13 @@ export function assessOpenClawVersion(
     return unknown("OpenClaw version output was not recognized.");
   }
 
-  if (advisories.some((advisory) => !supportedRange.test(advisory.vulnerableVersions))) {
+  if (
+    advisories.some(
+      (advisory) =>
+        !supportedRange.test(advisory.vulnerableVersions) ||
+        semver.validRange(rangeInReleaseOrder(advisory.vulnerableVersions)) === null,
+    )
+  ) {
     return {
       grade: "unknown",
       version,
@@ -89,6 +95,16 @@ export function assessOpenClawVersion(
   }
 
   const ordered = toReleaseOrder(version);
+  // Mapping lengthens the version; past semver's limits every satisfies() call
+  // would return false and silently pass, so refuse to grade instead.
+  if (semver.valid(ordered) === null) {
+    return {
+      grade: "unknown",
+      version,
+      advisories: [],
+      summary: "OpenClaw version is too long to compare with advisory ranges.",
+    };
+  }
   const matched = advisories.filter((advisory) =>
     semver.satisfies(ordered, rangeInReleaseOrder(advisory.vulnerableVersions), {
       includePrerelease: true,
