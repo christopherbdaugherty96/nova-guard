@@ -326,3 +326,16 @@ test("adversarial input is scanned in bounded time", () => {
     assert.ok(performance.now() - started < 2000, input.slice(0, 20));
   }
 });
+
+test("thousands of child_process aliases are matched in bounded time", () => {
+  const count = 8000;
+  const aliases = Array.from({ length: count }, (_, i) => `exec: a${i}`).join(", ");
+  const source = `const { ${aliases} } = require("child_process");\n${Array.from({ length: count }, (_, i) => `x${i};`).join("\n")}\na7999("x");`;
+  const started = performance.now();
+  const hits = scanSource(source).filter((hit) => hit.ruleId === "dangerous-exec");
+  assert.ok(performance.now() - started < 2000, `${performance.now() - started} ms`);
+  assert.deepEqual(
+    hits.map((hit) => hit.line),
+    [count + 2],
+  );
+});

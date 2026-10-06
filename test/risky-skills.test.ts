@@ -412,3 +412,87 @@ test("FIFOs never block the scan; a FIFO SKILL.md is unknown", posixOnly, () => 
     assert.deepEqual(JSON.parse(output), ["unknown", [{ path: path.join(fifoSkill, "SKILL.md"), reason: "unreadable" }]]);
   });
 });
+
+test("a workshop root is a container: its own SKILL.md does not hide child skills", () => {
+  fixture((_root, at) => {
+    const workshop = path.join(at.stateDir, "agents", "main", "agent", "workshop-skills");
+    skill(workshop);
+    const evil = path.join(workshop, "evil");
+    skill(evil, pipeToShell);
+    const result = assessRiskySkills(at, none);
+    assert.equal(result.grade, "critical");
+    assert.deepEqual(
+      result.findings.map((finding) => finding.skillDir),
+      [evil],
+    );
+  });
+});
+
+test("skills at OpenClaw's deepest reachable level are found", () => {
+  fixture((_root, at) => {
+    const skillsRoot = path.join(at.stateDir, "workspace", "skills");
+    skill(path.join(skillsRoot, "skills", "decoy"));
+    const deep = path.join(skillsRoot, "skills", "skills", "a", "b", "c", "d", "e", "f");
+    skill(deep, pipeToShell);
+    const result = assessRiskySkills(at, none);
+    assert.equal(result.grade, "critical");
+    assert.deepEqual(
+      result.findings.map((finding) => finding.skillDir),
+      [deep],
+    );
+  });
+});
+
+test("any object in agents.list is an agent, as in OpenClaw's roster", () => {
+  fixture((_root, at) => {
+    const dir = path.join(at.stateDir, "workspace-main", "skills", "evil");
+    skill(dir, pipeToShell);
+    const result = assessRiskySkills(at, ok({ agents: { list: [[], { id: "b" }] } }));
+    assert.deepEqual(
+      result.findings.map((finding) => finding.skillDir),
+      [dir],
+    );
+  });
+});
+
+test("~/.agents/skills uses the OS home; ~ in config uses OpenClaw's effective home", () => {
+  fixture((root, at) => {
+    const osHomeDir = path.join(root, "os-home");
+    const personal = path.join(osHomeDir, ".agents", "skills", "p");
+    const extra = path.join(at.homeDir, "extra", "x");
+    skill(personal, pipeToShell);
+    skill(extra, pipeToShell);
+    const result = assessRiskySkills({ ...at, osHomeDir }, ok({ skills: { load: { extraDirs: ["~/extra"] } } }));
+    assert.deepEqual(
+      result.findings.map((finding) => finding.skillDir).sort(),
+      [extra, personal].sort(),
+    );
+  });
+});
+
+test("skills reached through many links reuse scans instead of rereading files", posixOnly, () => {
+  fixture((_root, at) => {
+    const managed = path.join(at.stateDir, "skills");
+    let dir = path.join(managed, "S");
+    const levels: string[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      skill(dir);
+      levels.push(dir);
+      dir = path.join(dir, "n");
+    }
+    const bottom = levels.at(-1) as string;
+    for (let i = 0; i < 5; i += 1) write(path.join(bottom, `f${i}.js`), evalJs);
+    for (let i = 1; i < 30; i += 1) symlinkSync(levels[i] as string, path.join(managed, `l${i}`));
+    let scriptReads = 0;
+    const counting: SkillFs = {
+      ...nodeSkillFs,
+      readText(file, max) {
+        if (file.endsWith(".js")) scriptReads += 1;
+        return nodeSkillFs.readText(file, max);
+      },
+    };
+    const result = assessRiskySkills(at, none, counting);
+    assert.equal(result.grade, "critical");
+    assert.equal(scriptReads, 5);
+  });
+});
