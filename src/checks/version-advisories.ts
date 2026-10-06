@@ -148,8 +148,9 @@ export function assessOpenClawVersion(
  * OpenClaw publishes numeric hotfixes after their release (X, then X-1, X-2),
  * but SemVer orders X-1 before X. Versions and range bounds are mapped to an
  * order that matches publication:
- *   X-beta.1 < X (X-zz) < X-1 (X-zzhotfix.1) < X-2 < next release.
- * "zz" sorts after any alphabetic prerelease tag OpenClaw uses (alpha, beta).
+ *   X-beta.1 (X-pre.beta.1) < X (X-zz) < X-1 (X-zzhotfix.1) < X-2 < next.
+ * Every non-hotfix prerelease is moved under "pre", which sorts below "zz",
+ * so no input tag (even one named "zzz") can collide with the markers.
  */
 const numericHotfix = /^\d+$/;
 const versionToken = /(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?/g;
@@ -159,7 +160,7 @@ function toReleaseOrder(version: string): string {
     if (prerelease === undefined) {
       return `${core}-zz`;
     }
-    return numericHotfix.test(prerelease) ? `${core}-zzhotfix.${prerelease}` : `${core}-${prerelease}`;
+    return numericHotfix.test(prerelease) ? `${core}-zzhotfix.${prerelease}` : `${core}-pre.${prerelease}`;
   });
 }
 
@@ -197,7 +198,7 @@ function rangeInReleaseOrder(range: string): string {
         }
         return numericHotfix.test(prerelease)
           ? `${op}${core}-zzhotfix.${prerelease}`
-          : `${op}${core}-${prerelease}`;
+          : `${op}${core}-pre.${prerelease}`;
       },
     );
     orderedRanges.set(range, ordered);
