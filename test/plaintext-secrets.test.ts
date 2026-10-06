@@ -131,7 +131,7 @@ test("literal config secrets are reported by JSON path, and references are not",
   assert.equal(result.grade, "warning");
   assert.deepEqual(keys(result), [
     `plaintext ${configPath} gateway.auth.token`,
-    `plaintext ${configPath} models.providers.custom.apiKey`,
+    `plaintext ${configPath} models.providers.*.apiKey`,
     `plaintext ${configPath} channels.discord.token`,
   ]);
   assertNoLeak(result);
@@ -147,8 +147,8 @@ test("config env vars with secret-like names are reported", () => {
   });
   const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
   assert.deepEqual(keys(result), [
-    `plaintext ${configPath} env.vars.OPENAI_API_KEY`,
-    `plaintext ${configPath} env.GITHUB_TOKEN`,
+    `plaintext ${configPath} env.vars.*`,
+    `plaintext ${configPath} env.*`,
   ]);
   assertNoLeak(result);
 });
@@ -194,10 +194,10 @@ test("models.json provider keys and sensitive headers are reported per agent", (
     ),
   );
   assert.deepEqual(keys(result), [
-    `plaintext ${mainModels} providers.openai.apiKey`,
-    `plaintext ${mainModels} providers.openai.headers.x-api-key`,
-    `plaintext ${workModels} providers.openai.apiKey`,
-    `plaintext ${workModels} providers.openai.headers.x-api-key`,
+    `plaintext ${mainModels} providers.*.apiKey`,
+    `plaintext ${mainModels} providers.*.headers.*`,
+    `plaintext ${workModels} providers.*.apiKey`,
+    `plaintext ${workModels} providers.*.headers.*`,
   ]);
   assertNoLeak(result);
 });
@@ -207,7 +207,7 @@ test("the main agent's models.json is scanned even if the agents directory is no
     locations,
     fakeReader({ [mainModels]: JSON.stringify({ providers: { x: { apiKey: SECRET_A } } }) }),
   );
-  assert.deepEqual(keys(result), [`plaintext ${mainModels} providers.x.apiKey`]);
+  assert.deepEqual(keys(result), [`plaintext ${mainModels} providers.*.apiKey`]);
 });
 
 test("unreadable or unparseable files are unknown and never echo their contents", () => {
@@ -278,9 +278,9 @@ test("camelCase secret names and arrays under secret names are reported", () => 
   });
   const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
   assert.deepEqual(keys(result), [
-    `plaintext ${configPath} ssh.privateKey`,
-    `plaintext ${configPath} cloud.accessKey`,
-    `plaintext ${configPath} providers.o.apiKeys.0`,
+    `plaintext ${configPath} *.privateKey`,
+    `plaintext ${configPath} *.accessKey`,
+    `plaintext ${configPath} providers.*.apiKeys.0`,
   ]);
   assertNoLeak(result);
 });
@@ -295,9 +295,9 @@ test("literal text around a reference is still plaintext; a bare reference is no
   });
   const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
   assert.deepEqual(keys(result), [
-    `plaintext ${configPath} a.apiKey`,
-    `plaintext ${configPath} b.apiKey`,
-    `plaintext ${configPath} c.apiKey`,
+    `plaintext ${configPath} *.apiKey`,
+    `plaintext ${configPath} *.apiKey`,
+    `plaintext ${configPath} *.apiKey`,
   ]);
   assertNoLeak(result);
 });
@@ -305,7 +305,7 @@ test("literal text around a reference is still plaintext; a bare reference is no
 test("numeric passwords are plaintext; numeric token counts are not", () => {
   const config = "{ db: { password: 918273645 }, agents: { defaults: { maxTokens: 4096 } } }";
   const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
-  assert.deepEqual(keys(result), [`plaintext ${configPath} db.password`]);
+  assert.deepEqual(keys(result), [`plaintext ${configPath} *.password`]);
   assertNoLeak(result, ["918273645"]);
 });
 
@@ -326,15 +326,15 @@ test("a models.json apiKey that is only a reference is not plaintext", () => {
   assert.equal(result.grade, "pass");
 });
 
-test("a path segment that looks like a credential is redacted, not reported", () => {
+test("a map key that looks like a credential is replaced, not reported", () => {
   const keyLike = "sk-ant-api03-Qz7Lm2Wk4RtHy6TnQ3sDf8Jc1Vb";
   const config = JSON.stringify({ gateway: { tokens: { [keyLike]: { apiKey: SECRET_A } } } });
   const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
-  assert.deepEqual(keys(result), [`plaintext ${configPath} gateway.tokens.<redacted>.apiKey`]);
+  assert.deepEqual(keys(result), [`plaintext ${configPath} gateway.tokens.*.apiKey`]);
   assertNoLeak(result, [...SECRETS, keyLike]);
 });
 
-test("user-chosen map keys never reach a report unless they are plain words", () => {
+test("user-chosen map keys never reach a report", () => {
   const keysThatAreSecrets = [
     "hunter2",
     "Tr0ub4dor&3",
@@ -347,16 +347,16 @@ test("user-chosen map keys never reach a report unless they are plain words", ()
   for (const mapKey of keysThatAreSecrets) {
     const config = JSON.stringify({ gateway: { tokens: { [mapKey]: { token: SECRET_A } } } });
     const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
-    assert.deepEqual(keys(result), [`plaintext ${configPath} gateway.tokens.<redacted>.token`], mapKey);
+    assert.deepEqual(keys(result), [`plaintext ${configPath} gateway.tokens.*.token`], mapKey);
     assert.ok(!JSON.stringify(result).includes(mapKey), mapKey);
   }
   const named = JSON.stringify({ models: { providers: { "openai-codex": { apiKey: SECRET_B } } } });
   assert.deepEqual(keys(assessPlaintextSecrets(locations, fakeReader({ [configPath]: named }))), [
-    `plaintext ${configPath} models.providers.openai-codex.apiKey`,
+    `plaintext ${configPath} models.providers.*.apiKey`,
   ]);
 });
 
-test("long descriptive names are reported in full", () => {
+test("long .env names are reported in full; unknown config names are not", () => {
   const result = assessPlaintextSecrets(
     locations,
     fakeReader({
@@ -366,7 +366,7 @@ test("long descriptive names are reported in full", () => {
   );
   assert.deepEqual(keys(result), [
     `plaintext ${stateEnv}:1 ANTHROPIC_OAUTH_REFRESH_TOKEN`,
-    `plaintext ${configPath} a.anthropicOauthRefreshToken`,
+    `plaintext ${configPath} *.*`,
   ]);
 });
 
@@ -391,7 +391,7 @@ test("apiKey markers do not exempt other secret fields", () => {
     d: { token: "secretref-env:GATEWAY_TOKEN" },
   });
   const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
-  assert.deepEqual(keys(result), [`plaintext ${configPath} a.password`, `plaintext ${configPath} b.token`]);
+  assert.deepEqual(keys(result), [`plaintext ${configPath} *.password`, `plaintext ${configPath} *.token`]);
 });
 
 test("numeric credentials under token, key, and pin names are plaintext", () => {
@@ -400,9 +400,9 @@ test("numeric credentials under token, key, and pin names are plaintext", () => 
     "d: { maxTokens: 4096, tokenLimit: 100, keyCount: 3 } }";
   const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
   assert.deepEqual(keys(result), [
-    `plaintext ${configPath} a.token`,
-    `plaintext ${configPath} b.apiKey`,
-    `plaintext ${configPath} c.pin`,
+    `plaintext ${configPath} *.token`,
+    `plaintext ${configPath} *.apiKey`,
+    `plaintext ${configPath} *.pin`,
   ]);
 });
 
@@ -437,8 +437,8 @@ test("models.json findings keep the fallback kind", () => {
   });
   const result = assessPlaintextSecrets(locations, fakeReader({ [mainModels]: models }));
   assert.deepEqual(keys(result), [
-    `fallback ${mainModels} providers.o.apiKey`,
-    `fallback ${mainModels} providers.o.headers.x-api-key`,
+    `fallback ${mainModels} providers.*.apiKey`,
+    `fallback ${mainModels} providers.*.headers.*`,
   ]);
   assertNoLeak(result);
 });
@@ -488,12 +488,12 @@ test("$include cycles terminate and paths outside the config roots are not read"
     listDirectories: base.listDirectories,
   };
   const withoutRoot = assessPlaintextSecrets(locations, reader);
-  assert.deepEqual(keys(withoutRoot), [`plaintext ${b} x.token`]);
+  assert.deepEqual(keys(withoutRoot), [`plaintext ${b} *.token`]);
   assert.ok(!requested.includes(outside));
   assert.ok(!requested.includes(shared));
 
   const withRoot = assessPlaintextSecrets({ ...locations, includeRoots: [sharedRoot] }, reader);
-  assert.deepEqual(keys(withRoot), [`plaintext ${b} x.token`, `plaintext ${shared} token`]);
+  assert.deepEqual(keys(withRoot), [`plaintext ${b} *.token`, `plaintext ${shared} token`]);
   assertNoLeak(withRoot);
 });
 
@@ -517,6 +517,45 @@ test("missing, unparseable, or too deeply nested includes are unknown", () => {
   }
   const deep = assessPlaintextSecrets(locations, fakeReader(chain));
   assert.equal(deep.grade, "unknown");
+});
+
+test("word-shaped secrets used as map keys are replaced with * everywhere", () => {
+  const words = ["letmein", "hunter", "correcthorsebatterystaple", "opensesame"];
+  for (const word of words) {
+    const config = JSON.stringify({
+      models: { providers: { [word]: { apiKey: SECRET_A, headers: { [word]: SECRET_B } } } },
+      gateway: { tokens: { [word]: { token: SECRET_C } } },
+      env: { vars: { [word]: `\${GATEWAY_TOKEN:-${SECRET_D}}` } },
+    });
+    const models = JSON.stringify({ providers: { [word]: { apiKey: SECRET_A, headers: { [word]: SECRET_B } } } });
+    const result = assessPlaintextSecrets(
+      locations,
+      fakeReader({ [configPath]: config, [mainModels]: models }),
+    );
+    assert.deepEqual(keys(result), [
+      `plaintext ${configPath} models.providers.*.apiKey`,
+      `plaintext ${configPath} gateway.tokens.*.token`,
+      `fallback ${configPath} env.vars.*`,
+      `plaintext ${mainModels} providers.*.apiKey`,
+    ], word);
+    assert.ok(!JSON.stringify(result).includes(word), word);
+    assertNoLeak(result);
+  }
+});
+
+test("headers under a secret-like header name are reported as headers.*", () => {
+  const models = JSON.stringify({ providers: { o: { headers: { Authorization: SECRET_A, "X-Title": "nova" } } } });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [mainModels]: models }));
+  assert.deepEqual(keys(result), [`plaintext ${mainModels} providers.*.headers.*`]);
+});
+
+test("a credential-like .env variable name is replaced with *", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({ [stateEnv]: `sk_live_token_abc123def456ghi=${SECRET_A}` }),
+  );
+  assert.deepEqual(keys(result), [`plaintext ${stateEnv}:1 *`]);
+  assertNoLeak(result, [...SECRETS, "abc123def456ghi"]);
 });
 
 test("crafted unterminated references are handled in linear time", () => {
