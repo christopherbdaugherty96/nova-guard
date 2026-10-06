@@ -149,12 +149,16 @@ test("impossible month or zero components are unknown, not pass", () => {
 });
 
 test("oversized version output is unknown", () => {
-  assert.deepEqual(assessOpenClawVersion(`2026.9.2 ${"x".repeat(5_000)}`), {
+  const tooLong = {
     grade: "unknown",
     version: null,
     advisories: [],
     summary: "OpenClaw version output was too long to trust.",
-  });
+  };
+  assert.deepEqual(assessOpenClawVersion(`2026.9.2 ${"x".repeat(5_000)}`), tooLong);
+  // 1,400 CJK characters are about 4.2 KiB of UTF-8 but only 1,400 UTF-16 units.
+  const hidden = `\x1b]0;${"\u6f22".repeat(1_400)}\x07OpenClaw 2026.9.2`;
+  assert.deepEqual(assessOpenClawVersion(hidden), tooLong);
 });
 
 test("pathological input is handled in linear time", () => {
