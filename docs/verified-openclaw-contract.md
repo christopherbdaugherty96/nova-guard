@@ -270,7 +270,8 @@ by `openclaw security audit --deep`), ported unchanged with attribution in
   tree) is read and scanned once, and roots resolving to the same directory are
   walked once. Discovery visits at most 20,000 directories per root and 200,000
   in all, and resolves at most 20,000 symlinks in all (each also charged by its target's
-  depth squared, so links into very deep trees exhaust the budget sooner); script-file walks stop after 1,000,000 directory entries across all
+  depth squared, so links into very deep trees exhaust the budget sooner) and
+  spends at most 30 seconds resolving them, failed resolutions included; script-file walks stop after 1,000,000 directory entries across all
   skills; whatever is left is unknown.
 
 Reports give the skill directory, file, line, rule id, and severity only:

@@ -139,6 +139,10 @@ const defaultMaxSymlinkResolutions = 20_000;
 // caps the worst case near a minute while 20,000 shallow links stay well
 // inside it.
 const defaultMaxSymlinkCost = 2_000_000_000;
+// What a link costs to resolve cannot be known in advance (multi-hop chains,
+// links that fail deep in a tree), so the time spent resolving discovery
+// links is also capped. 20,000 ordinary links take well under a second.
+const defaultMaxSymlinkMillis = 30_000;
 const maxReportedPathLength = 4096;
 
 type SymlinkPolicy = "any" | "contained" | "contained-or-allowed";
@@ -199,13 +203,22 @@ export function assessRiskySkills(
   locations: SkillLocations,
   configInput: SkillConfigInput,
   fs: SkillFs = nodeSkillFs,
-  limits: { maxDiscoveryDirs?: number; maxSymlinkResolutions?: number; maxSymlinkCost?: number } = {},
+  limits: {
+    maxDiscoveryDirs?: number;
+    maxSymlinkResolutions?: number;
+    maxSymlinkCost?: number;
+    maxSymlinkMillis?: number;
+    now?: () => number;
+  } = {},
 ): RiskySkillsResult {
   const maxDiscoveryDirs = limits.maxDiscoveryDirs ?? defaultMaxDiscoveryDirs;
   const maxSymlinkResolutions = limits.maxSymlinkResolutions ?? defaultMaxSymlinkResolutions;
   const maxSymlinkCost = limits.maxSymlinkCost ?? defaultMaxSymlinkCost;
   let symlinkResolutions = 0;
   let symlinkCost = 0;
+  const maxSymlinkMillis = limits.maxSymlinkMillis ?? defaultMaxSymlinkMillis;
+  const now = limits.now ?? (() => performance.now());
+  let symlinkMillis = 0;
   const unknown: RiskySkillsResult["unknown"] = [];
   const findings: RiskySkillFinding[] = [];
   const markUnknown = (location: string, reason: SkillUnknownReason) =>
@@ -379,7 +392,14 @@ export function assessRiskySkills(
             truncated = true;
             break;
           }
+          const started = now();
           childReal = tryRealpath(child);
+          symlinkMillis += now() - started;
+          if (symlinkMillis > maxSymlinkMillis) {
+            markUnknown(rootDir, "discovery-truncated");
+            truncated = true;
+            break;
+          }
           if (childReal === undefined) continue;
           const components = childReal.split(path.sep).length;
           symlinkCost += components * components;
