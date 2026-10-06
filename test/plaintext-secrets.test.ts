@@ -5,9 +5,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import dotenv from "dotenv";
+
 import {
   assessPlaintextSecrets,
   nodeSecretFileReader,
+  parseDotEnv,
   type PlaintextSecretsResult,
   type SecretFileReader,
 } from "../src/checks/plaintext-secrets.js";
@@ -361,6 +364,36 @@ test("a FIFO or other non-regular file is unknown and never blocks the scan", { 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the .env parser matches dotenv, the parser OpenClaw uses", () => {
+  const corpus = [
+    "A=1\nB = 2\n export C=3\nD: 4\ne.f-g=5",
+    "Q='single # not comment'\nR=\"double\\nnewline\"\nS=`back`\nT=x # comment\nU=",
+    'M="\nmulti\nline\n"\nN=after',
+    "X=1\rY=2\r\nZ=3",
+    "DUP=first\nDUP=second",
+    "# only comment\n\n   \nnot an assignment\n=novalue",
+    "K='unterminated\nL=2",
+    "\ufeffBOM_KEY=1",
+  ];
+  for (const text of corpus) {
+    const ours = Object.fromEntries([...parseDotEnv(text)].map(([key, { value }]) => [key, value]));
+    assert.deepEqual(ours, dotenv.parse(text), JSON.stringify(text));
+  }
+});
+
+test("line numbers follow the assignment, including after blank lines", () => {
+  assert.deepEqual(
+    [...parseDotEnv("\n\n  OPENAI_API_KEY=x\nDUP=1\n\nDUP=2\n")].map(([key, { line }]) => [key, line]),
+    [["OPENAI_API_KEY", 3], ["DUP", 6]],
+  );
+});
+
+test("large .env files are parsed in linear time", () => {
+  const started = performance.now();
+  assert.equal(parseDotEnv("A=1\n".repeat(60_000)).size, 1);
+  assert.ok(performance.now() - started < 500);
 });
 
 test("the real file reader is read-only and reports missing, ok, and oversized files", () => {
