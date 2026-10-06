@@ -1,31 +1,26 @@
-export interface VersionAdvisory {
-  cve: string;
+import semver from "semver";
+
+import {
+  advisoryDataDate as bundledDataDate,
+  bundledAdvisories,
+} from "../data/openclaw-advisories.js";
+
+export interface BundledAdvisory {
   ghsa: string;
-  /** Highest affected release, inclusive, as published in the advisory. */
-  affectedThrough: string;
-  patched: string;
-  source: string;
+  package: "openclaw" | "clawdbot" | "moltbot";
+  severity: "critical" | "high" | "moderate" | "low";
+  /** npm range from the GitHub-reviewed advisory, e.g. "<2026.2.1". */
+  vulnerableVersions: string;
+  title: string;
 }
 
 export interface VersionAdvisoryResult {
-  grade: "pass" | "critical" | "unknown";
+  grade: "pass" | "warning" | "critical" | "unknown";
   version: string | null;
+  /** GHSA ids of matching advisories, critical and high first. */
   advisories: string[];
   summary: string;
 }
-
-/** Date the bundled advisory list was last reviewed. Scans never fetch it. */
-export const advisoryDataDate = "2026-10-05";
-
-export const bundledAdvisories: readonly VersionAdvisory[] = [
-  {
-    cve: "CVE-2026-25253",
-    ghsa: "GHSA-g8p2-7wf7-98mq",
-    affectedThrough: "2026.1.28",
-    patched: "2026.1.29",
-    source: "https://github.com/advisories/GHSA-g8p2-7wf7-98mq",
-  },
-];
 
 /** Version output is one short line; more than 4 KiB of UTF-8 is not trusted. */
 const maxOutputBytes = 4096;
@@ -49,11 +44,19 @@ const versionLine = new RegExp(
   `^(?:${versionPattern}|OpenClaw ${versionPattern}(?: \\([0-9a-f]{7}\\))?)$`,
 );
 
-// BigInt keeps arbitrarily long maintenance counters exact.
-type Core = [bigint, bigint, bigint];
+const severe = new Set<BundledAdvisory["severity"]>(["critical", "high"]);
 
+/**
+ * Grades `openclaw --version` output against the bundled, dated advisory list.
+ * Ranges are evaluated with npm's semver, as `npm audit` does, but prereleases
+ * are always included so a prerelease is judged by precedence, not skipped.
+ * The version line does not name its package, so every package's advisories
+ * apply: they share one calendar version line (clawdbot, moltbot, openclaw).
+ */
 export function assessOpenClawVersion(
   versionOutput: string | undefined,
+  advisories: readonly BundledAdvisory[] = bundledAdvisories,
+  dataDate: string = bundledDataDate,
 ): VersionAdvisoryResult {
   if (versionOutput === undefined || versionOutput.trim().length === 0) {
     return unknown("OpenClaw version could not be read.");
@@ -62,89 +65,57 @@ export function assessOpenClawVersion(
     return unknown("OpenClaw version output was too long to trust.");
   }
 
-  const line = versionOutput.replace(terminalEscape, "").trim();
-  const match = versionLine.exec(line);
+  const match = versionLine.exec(versionOutput.replace(terminalEscape, "").trim());
   if (!match) {
     return unknown("OpenClaw version output was not recognized.");
   }
   // Groups 1-4 hold the bare form; groups 5-8 hold the "OpenClaw" form.
-  const [year, month, counter, prereleaseTag] =
+  const [year, month, counter, prerelease] =
     match[1] !== undefined ? match.slice(1, 5) : match.slice(5, 9);
-  const core: Core = [BigInt(year), BigInt(month), BigInt(counter)];
-  if (!isReleaseVersion(core)) {
+  const version = `${year}.${month}.${counter}${prerelease ? `-${prerelease}` : ""}`;
+  // semver rejects components beyond Number.MAX_SAFE_INTEGER; such a version
+  // cannot be compared with the advisory ranges, so it is not graded.
+  if (semver.valid(version) === null) {
     return unknown("OpenClaw version output was not recognized.");
   }
-  const prerelease = prereleaseTag !== undefined;
-  const version = `${core.join(".")}${prerelease ? `-${prereleaseTag}` : ""}`;
 
-  // An inclusive upper bound covers prereleases of that release and earlier.
-  const matched = bundledAdvisories.filter(
-    (advisory) => compareCore(core, parseCore(advisory.affectedThrough)) <= 0,
+  const matched = advisories.filter((advisory) =>
+    semver.satisfies(version, advisory.vulnerableVersions, { includePrerelease: true }),
   );
-
-  // A prerelease of the first patched release may predate the fix.
-  const unconfirmed = prerelease
-    ? bundledAdvisories.filter(
-        (advisory) =>
-          !matched.includes(advisory) &&
-          compareCore(core, parseCore(advisory.patched)) === 0,
-      )
-    : [];
-  if (matched.length === 0 && unconfirmed.length > 0) {
-    return {
-      grade: "unknown",
-      version,
-      advisories: [],
-      summary: `OpenClaw ${version} is a prerelease of the first release patched for ${unconfirmed
-        .map((advisory) => advisory.cve)
-        .join(", ")}; the fix cannot be confirmed.`,
-    };
-  }
-
   if (matched.length === 0) {
     return {
       grade: "pass",
       version,
       advisories: [],
-      summary: `OpenClaw ${version} matches no bundled advisory (data as of ${advisoryDataDate}).`,
+      summary: `OpenClaw ${version} matches no bundled advisory (data as of ${dataDate}).`,
     };
   }
 
-  const ids = matched.map((advisory) => advisory.cve);
-  const upgradeTo = matched
-    .map((advisory) => advisory.patched)
-    .sort((a, b) => compareCore(parseCore(b), parseCore(a)))[0];
+  const ids = [
+    ...new Set(
+      [...matched]
+        .sort(
+          (a, b) =>
+            Number(severe.has(b.severity)) - Number(severe.has(a.severity)) ||
+            a.ghsa.localeCompare(b.ghsa),
+        )
+        .map((advisory) => advisory.ghsa),
+    ),
+  ];
+  const severeCount = new Set(
+    matched.filter((advisory) => severe.has(advisory.severity)).map((advisory) => advisory.ghsa),
+  ).size;
+  const noun = ids.length === 1 ? "advisory" : "advisories";
   return {
-    grade: "critical",
+    grade: severeCount > 0 ? "critical" : "warning",
     version,
     advisories: ids,
-    summary: `OpenClaw ${version} is affected by ${ids.join(", ")}; upgrade to ${upgradeTo} or later.`,
+    summary: `OpenClaw ${version} matches ${ids.length} known ${noun} (${
+      severeCount > 0 ? `${severeCount} critical or high` : "moderate or low"
+    }); upgrade to a current release.`,
   };
 }
 
 function unknown(summary: string): VersionAdvisoryResult {
   return { grade: "unknown", version: null, advisories: [], summary };
-}
-
-/**
- * OpenClaw versions are year.month.N. N is usually the day but Extended Stable
- * releases use it as a maintenance counter (for example v2026.6.35), so only
- * the month range and a non-zero counter are enforced.
- */
-function isReleaseVersion([, month, counter]: Core): boolean {
-  return month >= 1n && month <= 12n && counter >= 1n;
-}
-
-function parseCore(value: string): Core {
-  const [year, month, counter] = value.split(".").map((part) => BigInt(part));
-  return [year, month, counter];
-}
-
-function compareCore(a: Core, b: Core): number {
-  for (let i = 0; i < 3; i += 1) {
-    if (a[i] !== b[i]) {
-      return a[i] < b[i] ? -1 : 1;
-    }
-  }
-  return 0;
 }

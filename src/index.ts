@@ -5,12 +5,13 @@ export type {
   GatewayExposureResult,
   GatewayRuntimeContext,
 } from "./checks/gateway-exposure.js";
-export {
-  advisoryDataDate,
-  assessOpenClawVersion,
-  bundledAdvisories,
-} from "./checks/version-advisories.js";
+export { assessOpenClawVersion } from "./checks/version-advisories.js";
 export type {
-  VersionAdvisory,
+  BundledAdvisory,
   VersionAdvisoryResult,
 } from "./checks/version-advisories.js";
+export {
+  advisoryDataDate,
+  advisoryDataSource,
+  bundledAdvisories,
+} from "./data/openclaw-advisories.js";

@@ -49,10 +49,17 @@ Sources:
 ## Version
 
 - `openclaw --version` is a documented local version probe.
-- GitHub's reviewed advisory for CVE-2026-25253 lists `clawdbot <= 2026.1.28`
-  as affected and `2026.1.29` as patched.
-- The vulnerability list will be bundled and dated. A local scan does not need
-  live advisory access.
+- The vulnerability list is bundled and dated in
+  `src/data/openclaw-advisories.ts`. It holds every GitHub-reviewed advisory
+  for the `openclaw`, `clawdbot`, and `moltbot` npm packages, as served by
+  npm's bulk advisory endpoint (the data `npm audit` uses). For example,
+  CVE-2026-25253 (GHSA-g8p2-7wf7-98mq) affects `clawdbot <=2026.1.28`, and
+  GHSA-fhvm-j76f-qmjv affects `openclaw <2026.2.1`. A scan never fetches it;
+  maintainers regenerate it with `node scripts/update-advisories.mjs`.
+- Ranges are evaluated with npm's `semver`, with prereleases always included.
+  The version line does not name its package, so every package's advisories
+  apply to the shared calendar version line. A match with any critical or high
+  advisory grades `critical`; only moderate or low grades `warning`.
 - `openclaw --version` prints one line on stdout. Older releases print the
   bare version (verified at `v2026.1.24`, published as `clawdbot`
   `2026.1.24-0`, and at `v2026.1.29` and `v2026.1.30`). Current `main` prints `OpenClaw <version>` or
@@ -64,7 +71,8 @@ Sources:
   before escapes are stripped) is `unknown`.
 - Versions are `YYYY.M.N`. `N` is usually the day, but Extended Stable releases
   use it as a maintenance counter (official tags `v2026.6.33` to `v2026.8.35`),
-  so the scanner enforces only month 1-12 and a non-zero `N` of any length.
+  so the scanner enforces only month 1-12 and a non-zero `N`. A component
+  too large for `semver` to compare is `unknown`.
 - Numbers must be SemVer-canonical (no leading zeros in the version or in
   numeric prerelease identifiers), so `2026.01.029` or `2026.1.30-01` is
   `unknown`.
@@ -77,6 +85,8 @@ Sources:
 - <https://github.com/openclaw/openclaw/blob/main/src/infra/git-commit.ts>
 - <https://semver.org/spec/v2.0.0.html>
 - <https://github.com/advisories/GHSA-g8p2-7wf7-98mq>
+- <https://github.com/advisories/GHSA-fhvm-j76f-qmjv>
+- <https://docs.npmjs.com/cli/commands/npm-audit>
 
 ## Secrets
 
