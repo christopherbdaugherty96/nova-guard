@@ -533,6 +533,55 @@ test("a file reached first too deep is rescanned when a shallower include reache
   assertNoLeak(result);
 });
 
+test("a rescan never drops another file's findings, even under very long paths", () => {
+  const longDir = path.join(path.sep, "s".repeat(120), "t".repeat(120));
+  const longLocations = { stateDir: longDir, configPath: path.join(longDir, "openclaw.json"), homeDir: home };
+  const result = assessPlaintextSecrets(
+    longLocations,
+    fakeReader({
+      [path.join(longDir, "openclaw.json")]: `{ $include: ["a/b.json5", "x1.json5", "x2.json5"] }`,
+      [path.join(longDir, "a", "b.json5")]: `{ $include: "../x2.json5" }`,
+      [path.join(longDir, "x2.json5")]: `{ $include: "x1.json5" }`,
+      [path.join(longDir, "x1.json5")]: `{ token: "${SECRET_A}" }`,
+    }),
+  );
+  assert.equal(result.grade, "warning");
+  assert.equal(result.findings.length, 1);
+  assertNoLeak(result);
+});
+
+test("includes OpenClaw would refuse or cannot parse make the result unknown", () => {
+  for (const include of [`"/etc/x.json5"`, `"../outside.json5"`, `[["a.json5"]]`, `{ path: "a.json5" }`, `42`]) {
+    const result = assessPlaintextSecrets(
+      locations,
+      fakeReader({ [configPath]: `{ gateway: { $include: ${include} } }` }),
+    );
+    assert.equal(result.grade, "unknown", include);
+  }
+});
+
+test("a file name starting with .. inside the config directory is not an escape", () => {
+  const dotted = path.join(stateDir, "..secrets.json5");
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({ [configPath]: `{ $include: "./..secrets.json5" }`, [dotted]: `{ token: "${SECRET_A}" }` }),
+  );
+  assert.deepEqual(keys(result), [`plaintext ${dotted} token`]);
+});
+
+test("one file included at two sites is checked under each site's key", () => {
+  const shared = path.join(stateDir, "p.json5");
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [configPath]: `{ x: { $include: "./p.json5" }, passwords: { $include: "./p.json5" } }`,
+      [shared]: `["${SECRET_A}"]`,
+    }),
+  );
+  assert.deepEqual(keys(result), [`plaintext ${shared} passwords.0`]);
+  assertNoLeak(result);
+});
+
 test("missing, unparseable, or too deeply nested includes are unknown", () => {
   const missing = path.join(stateDir, "missing.json5");
   const broken = path.join(stateDir, "broken.json5");
