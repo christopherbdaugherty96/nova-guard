@@ -1,0 +1,141 @@
+// Maintainer tooling for regenerating the bundled advisory list. The scanner
+// never imports this module; it is the only code in the repository that
+// reaches the network, and only when a maintainer runs the refresh script.
+import semver from "semver";
+
+import { supportedRange, type BundledAdvisory } from "../checks/version-advisories.js";
+
+export const registry = "https://registry.npmjs.org/";
+export const bulkAdvisoryEndpoint = `${registry}-/npm/v1/security/advisories/bulk`;
+
+/** One advisory as npm's bulk advisory endpoint returns it. */
+export interface RawAdvisory {
+  url: string;
+  severity: string;
+  vulnerable_versions: string;
+  title: string;
+}
+
+const severities = new Set<string>(["critical", "high", "moderate", "low"]);
+
+/**
+ * Reads a package's published versions from the registry over HTTP. No child
+ * process is spawned, so the refresh behaves the same on Windows, macOS, and
+ * Linux (spawning `npm` directly fails on Windows, where it is `npm.cmd`).
+ */
+export async function fetchPackageVersions(
+  name: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string[]> {
+  const response = await fetchImpl(`${registry}${encodeURIComponent(name)}`);
+  if (!response.ok) {
+    throw new Error(`Could not read ${name} versions: HTTP ${response.status}`);
+  }
+  const packument = (await response.json()) as { versions?: Record<string, unknown> };
+  const versions = Object.keys(packument.versions ?? {});
+  if (versions.length === 0) {
+    throw new Error(`Registry returned no versions for ${name}.`);
+  }
+  return versions;
+}
+
+export async function fetchBulkAdvisories(
+  request: Record<string, string[]>,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Record<string, unknown>> {
+  const response = await fetchImpl(bulkAdvisoryEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    throw new Error(`Advisory request failed: HTTP ${response.status}`);
+  }
+  return (await response.json()) as Record<string, unknown>;
+}
+
+/**
+ * Validates a bulk advisory response and turns it into bundle entries.
+ *
+ * A partial response must never quietly shrink the bundle: every advisory
+ * that disappears is a version that could start to pass. So any existing
+ * package:GHSA entry missing from the response is an error unless the
+ * maintainer passes `allowRemovals`, and an empty package list is always an
+ * error.
+ */
+export function buildBundle(
+  body: Record<string, unknown>,
+  packages: readonly BundledAdvisory["package"][],
+  previous: readonly BundledAdvisory[],
+  options: { allowRemovals?: boolean } = {},
+): BundledAdvisory[] {
+  for (const name of packages) {
+    const list = body[name];
+    if (!Array.isArray(list) || list.length === 0) {
+      throw new Error(`No advisories returned for ${name}; refusing to write the bundle.`);
+    }
+  }
+
+  const seen = new Set<string>();
+  const advisories: BundledAdvisory[] = [];
+  for (const name of packages) {
+    for (const advisory of body[name] as RawAdvisory[]) {
+      const ghsa = /GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}/.exec(advisory.url)?.[0];
+      if (!ghsa) {
+        throw new Error(`Advisory without a GHSA id: ${advisory.url}`);
+      }
+      const key = `${name}:${ghsa}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (!severities.has(advisory.severity)) {
+        throw new Error(`${ghsa}: unexpected severity ${advisory.severity}`);
+      }
+      // An invalid or unsupported range would silently never match.
+      if (
+        semver.validRange(advisory.vulnerable_versions) === null ||
+        !supportedRange.test(advisory.vulnerable_versions)
+      ) {
+        throw new Error(`${ghsa}: unsupported range ${advisory.vulnerable_versions}`);
+      }
+      advisories.push({
+        ghsa,
+        package: name,
+        severity: advisory.severity as BundledAdvisory["severity"],
+        vulnerableVersions: advisory.vulnerable_versions,
+        title: advisory.title,
+      });
+    }
+  }
+
+  const removed = previous
+    .map((advisory) => `${advisory.package}:${advisory.ghsa}`)
+    .filter((key) => !seen.has(key))
+    .sort();
+  if (removed.length > 0 && options.allowRemovals !== true) {
+    const noun = removed.length === 1 ? "advisory would be" : "advisories would be";
+    throw new Error(
+      `${removed.length} bundled ${noun} removed:\n  ${removed.join("\n  ")}\n` +
+        "A partial registry response would create false passes. If these removals " +
+        "are intended (for example, withdrawn advisories), re-run with --allow-removals.",
+    );
+  }
+
+  return advisories.sort(
+    (a, b) => a.ghsa.localeCompare(b.ghsa) || a.package.localeCompare(b.package),
+  );
+}
+
+export function renderBundle(
+  advisories: readonly BundledAdvisory[],
+  dataDate: string,
+  source: string,
+): string {
+  return `// Generated by scripts/update-advisories.ts. Do not edit by hand.
+import type { BundledAdvisory } from "../checks/version-advisories.js";
+
+export const advisoryDataDate = ${JSON.stringify(dataDate)};
+export const advisoryDataSource = ${JSON.stringify(source)};
+
+export const bundledAdvisories: readonly BundledAdvisory[] = ${JSON.stringify(advisories, null, 2)};
+`;
+}

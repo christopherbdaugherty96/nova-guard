@@ -55,7 +55,7 @@ Sources:
   npm's bulk advisory endpoint (the data `npm audit` uses). For example,
   CVE-2026-25253 (GHSA-g8p2-7wf7-98mq) affects `clawdbot <=2026.1.28`, and
   GHSA-fhvm-j76f-qmjv affects `openclaw <2026.2.1`. A scan never fetches it;
-  maintainers regenerate it with `node scripts/update-advisories.mjs`.
+  maintainers regenerate it with `npm run update-advisories`.
 - Ranges are evaluated with npm's `semver`, with prereleases always included.
   The version line does not name its package, so every package's advisories
   apply to the shared calendar version line. A match with any critical or high
@@ -75,8 +75,11 @@ Sources:
   supported. Hyphen ranges, `||`, `^`, `~`, and x-ranges would be expanded by
   `semver` after the mapping, so the generator refuses them and the scanner
   reports `unknown` if bundled data ever contains one.
-  The generator refuses to write a bundle with an empty package list, an
-  unknown severity, or a range `semver` cannot parse.
+  The generator reads versions and advisories from the registry over HTTP
+  (no child processes, so it runs the same on Windows). It refuses to write a
+  bundle with an empty package list, an unknown severity, or a range `semver`
+  cannot parse, and it refuses any refresh that would drop an existing
+  advisory unless run with `--allow-removals`, which lists every removal.
 - `openclaw --version` prints one line on stdout. Older releases print the
   bare version (verified at `v2026.1.24`, published as `clawdbot`
   `2026.1.24-0`, and at `v2026.1.29` and `v2026.1.30`). Current `main` prints `OpenClaw <version>` or
