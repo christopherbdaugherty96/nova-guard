@@ -186,6 +186,16 @@ test("advisory data in an unsupported range form is never trusted", () => {
   }
 });
 
+test("a version too long to map into release order is unknown, not pass", () => {
+  const long = `2026.1.28-${"9".repeat(238)}`;
+  assert.deepEqual(assessOpenClawVersion(long), {
+    grade: "unknown",
+    version: long,
+    advisories: [],
+    summary: "OpenClaw version is too long to compare with advisory ranges.",
+  });
+});
+
 test("ANSI and other terminal escapes do not hide the version", () => {
   for (const input of ["\x1b[32m2026.1.28\x1b[0m", "\x1b[2KOpenClaw 2026.1.28"]) {
     const result = assessOpenClawVersion(input);
