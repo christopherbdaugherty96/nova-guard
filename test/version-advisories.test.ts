@@ -154,6 +154,11 @@ test("Extended Stable maintenance counters above 31 are valid releases", () => {
   assert.equal(result.version, "2026.6.35");
 });
 
+test("maintenance counters are not limited to two digits", () => {
+  assert.equal(assessOpenClawVersion("2026.6.100").grade, "pass");
+  assert.equal(assessOpenClawVersion("2025.12.100").grade, "critical");
+});
+
 test("missing version output is unknown, not pass", () => {
   for (const input of [undefined, "", "   \n"]) {
     assert.deepEqual(assessOpenClawVersion(input), {
