@@ -48,8 +48,47 @@ test("a prerelease of an affected release is affected", () => {
   assert.equal(result.version, "2026.1.28-beta.1");
 });
 
-test("a prerelease of the patched release follows the advisory range", () => {
-  assert.equal(assessOpenClawVersion("2026.1.29-beta.1").grade, "pass");
+test("a prerelease of the first patched release is unknown", () => {
+  assert.deepEqual(assessOpenClawVersion("2026.1.29-beta.1"), {
+    grade: "unknown",
+    version: "2026.1.29-beta.1",
+    advisories: [],
+    summary: `OpenClaw 2026.1.29-beta.1 is a prerelease of the first release patched for ${cve}; the fix cannot be confirmed.`,
+  });
+});
+
+test("an unparseable version token cannot be bypassed by another date", () => {
+  for (const input of [
+    "openclaw 2026.1.28_1 (built 2026.2.3)",
+    "openclaw 2026.1.28.1 (released 2026.10.1)",
+  ]) {
+    assert.equal(assessOpenClawVersion(input).grade, "unknown", input);
+  }
+});
+
+test("ANSI color codes do not hide the version", () => {
+  const result = assessOpenClawVersion("\x1b[32m2026.1.28\x1b[0m");
+  assert.equal(result.grade, "critical");
+  assert.equal(result.version, "2026.1.28");
+});
+
+test("CRLF, build metadata, and sentence punctuation are tolerated", () => {
+  assert.equal(assessOpenClawVersion("openclaw 2026.1.28\r\n").grade, "critical");
+  assert.equal(assessOpenClawVersion("2026.1.28+abc123").version, "2026.1.28");
+  assert.equal(assessOpenClawVersion("Version 2026.9.2.").grade, "pass");
+});
+
+test("leading zeros and repeated identical versions are one version", () => {
+  const result = assessOpenClawVersion("2026.01.28 (2026.1.28)");
+  assert.equal(result.grade, "critical");
+  assert.equal(result.version, "2026.1.28");
+});
+
+test("an update notice alongside the installed version is unknown", () => {
+  assert.equal(
+    assessOpenClawVersion("2026.1.28\nUpdate available: 2026.9.2").grade,
+    "unknown",
+  );
 });
 
 test("missing version output is unknown, not pass", () => {
