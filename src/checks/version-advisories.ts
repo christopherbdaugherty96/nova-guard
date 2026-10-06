@@ -36,7 +36,7 @@ const looksLikeVersion = /(?<!\p{Nd})\p{Nd}{4,}\.\p{Nd}/u;
 /** Version output is one short line; anything far larger is not trusted. */
 const maxOutputLength = 4096;
 const strictVersion =
-  /^(?:[A-Za-z][A-Za-z0-9]*-)?v?(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+  /^(?:[A-Za-z][A-Za-z0-9]*-)?v?(\d{4})\.(\d{1,2})\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 // CSI sequences (colors, cursor and line control) and OSC sequences.
 const terminalEscape = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
