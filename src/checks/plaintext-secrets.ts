@@ -57,6 +57,9 @@ const maxFileBytes = 1024 * 1024;
 const maxDepth = 64;
 // OpenClaw's own limit (src/config/includes.ts): includes nest at most 10 deep.
 const maxIncludeDepth = 10;
+// Includes can fan out (one file included under many keys, many levels deep).
+// Real configs need a handful of visits; past this the rest is graded unknown.
+const maxIncludeVisits = 256;
 const includeKey = "$include";
 const maxKeyLength = 200;
 
@@ -73,6 +76,17 @@ const secretNameFragments = [
   "private-key",
   "access-key",
 ];
+// Credential fields in OpenClaw's SecretRef credential surface whose names
+// carry none of the fragments above.
+const exactSecretNames = new Set([
+  "key",
+  "authorization",
+  "proxy-authorization",
+  "encrypt-key",
+  "service-account",
+  "auth-tag",
+  "passphrase",
+]);
 // Names that point at a secret held elsewhere rather than holding one.
 const indirectNameSuffix = /(?:file|path|env|ref|url|uri)$/;
 
@@ -87,7 +101,7 @@ function normalizeName(name: string): string {
 
 export function isSecretLikeName(name: string): boolean {
   const normalized = normalizeName(name);
-  if (normalized === "key" || normalized === "authorization" || normalized === "proxy-authorization") {
+  if (exactSecretNames.has(normalized)) {
     return true;
   }
   if (indirectNameSuffix.test(normalized)) {
@@ -122,7 +136,9 @@ const nonSecretMarkers = new Set([
   "AWS_ACCESS_KEY_ID",
   "AWS_PROFILE",
 ]);
-const nonSecretMarkerPrefixes = ["oauth:", "secretref-env:"];
+const nonSecretMarkerPrefixes = ["oauth:"];
+// "secretref-env:NAME" names an env var; anything after the name is a value.
+const secretRefEnvMarker = /^secretref-env:[A-Za-z_][A-Za-z0-9_]*$/;
 // Persisted env-var-name markers such as "OPENAI_API_KEY". A real credential
 // is not an upper-case identifier ending in _KEY or _TOKEN.
 const envNameMarker = /^[A-Z][A-Z0-9_]*_(?:API_KEY|KEY|TOKEN)$/;
@@ -134,7 +150,7 @@ const envNameMarker = /^[A-Z][A-Z0-9_]*_(?:API_KEY|KEY|TOKEN)$/;
  */
 function isNonSecretMarker(value: string, name: string): boolean {
   const trimmed = value.trim();
-  if (trimmed === "secretref-managed" || trimmed.startsWith("secretref-env:")) return true;
+  if (trimmed === "secretref-managed" || secretRefEnvMarker.test(trimmed)) return true;
   if (!normalizeName(name).endsWith("api-key")) return false;
   return (
     nonSecretMarkers.has(trimmed) ||
@@ -244,7 +260,8 @@ const schemaFieldNames = new Set([
   "credential", "credentials", "serviceAccount", "serviceAccountKey", "remote",
   "tailscale", "trustedProxy", "hooks", "memory", "browser", "session",
   "messages", "talk", "pin", "encryptionKey", "signingKey", "sessionKey",
-  "cookie", "oauth",
+  "cookie", "oauth", "accounts", "encryptKey", "authTag", "passphrase",
+  "request", "proxy", "tls",
 ]);
 
 function reportedKey(segments: PathSegment[]): string {
@@ -504,10 +521,17 @@ export function assessPlaintextSecrets(
   const reachedFiles = new Set<string>();
   const tooDeep: string[] = [];
   const refused: string[] = [];
+  let visits = 0;
   const scanConfigFile = (file: string, depth: number, prefix: PathSegment[], name: string) => {
     const visit = `${path.resolve(file)}\u0000${name}\u0000${JSON.stringify(prefix)}`;
     const previous = shallowestDepth.get(visit);
     if (previous !== undefined && previous <= depth) return;
+    if (visits >= maxIncludeVisits) {
+      // Not scanned in this context, so secrets there cannot be ruled out.
+      refused.push(sanitize(file));
+      return;
+    }
+    visits += 1;
     shallowestDepth.set(visit, depth);
     reachedFiles.add(path.resolve(file));
     const includes: IncludeSite[] = [];

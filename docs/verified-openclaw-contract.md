@@ -160,7 +160,9 @@ scanner reads, never writes:
   because other agents' files could not be checked.
 - Secret-like names use OpenClaw's own conservative fragments (`api-key`,
   `apikey`, `token`, `secret`, `password`, `credential`, plus
-  `authorization`), after camelCase and `_`/`.` are normalized to dashes, so
+  `authorization`), plus credential fields from OpenClaw's SecretRef
+  credential surface whose names carry no such fragment (`encryptKey`,
+  `serviceAccount`, `authTag`, `passphrase`), after camelCase and `_`/`.` are normalized to dashes, so
   `privateKey`, `accessKey`, and `apiKeys` match. Array items take the name of
   the enclosing key. Names ending in `file`, `path`, `env`, `ref`, `url`, or
   `uri` point elsewhere and are skipped. Counts such as `maxTokens` are not
@@ -183,8 +185,12 @@ scanner reads, never writes:
 - Every `.env` assignment with a value is reported, including one a later
   line overrides, because the earlier secret is still on disk. OpenClaw's
   `apiKey` placeholders exempt only `apiKey` fields; SecretRef markers
-  (`secretref-managed`, `secretref-env:NAME`) are exempt anywhere. Numbers are
+  (`secretref-managed`, and `secretref-env:NAME` when nothing follows the
+  variable name) are exempt anywhere. Numbers are
   reported under password, secret, token, key, and PIN names.
+- Include expansion stops after 256 file visits (one file included under
+  many keys, many levels deep, otherwise grows exponentially); files not
+  scanned past that limit are reported as `unknown` by path.
 - Files over 1 MiB, non-regular files (a FIFO is never opened, so it cannot
   block), unreadable files, and unparseable JSON are reported as `unknown` by
   path only; parser messages, which can quote file bytes, are never surfaced.
