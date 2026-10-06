@@ -168,7 +168,7 @@ scanner reads, never writes:
   still plaintext. Upper-case env-var-name markers such as `OPENAI_API_KEY`
   are exempt only in `apiKey` fields.
 - Reported paths are schema-safe. A segment is shown only if it is an array
-  index or one of nova-guard's trusted OpenClaw schema field names (config
+  position (tracked structurally, so a digit-only map key is still `*`) or one of nova-guard's trusted OpenClaw schema field names (config
   sections, fixed channel ids, and secret field names, all public
   vocabulary). Every user-controlled map key (provider ids, header names,
   `env.vars` names, token map keys) is reported as `*`, so findings read

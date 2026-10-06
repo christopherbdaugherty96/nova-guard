@@ -145,7 +145,6 @@ function isNonSecretMarker(value: string, name: string): boolean {
 
 // Scheme words that may precede a reference, as in "Bearer ${TOKEN}".
 const authScheme = /^(?:bearer|basic|token)$/i;
-const referenceName = /^[A-Z_][A-Z0-9_]*/;
 
 interface ParsedReferences {
   references: { name: string; fallback?: string }[];
@@ -170,8 +169,13 @@ function parseReferences(value: string): ParsedReferences {
       index = start + 2;
       continue;
     }
-    const name = referenceName.exec(value.slice(start + 2, start + 2 + 256))?.[0];
-    const afterName = start + 2 + (name?.length ?? 0);
+    // The name runs to its actual end: [A-Z_][A-Z0-9_]*, with no length cap.
+    let afterName = start + 2;
+    if (/[A-Z_]/.test(value[afterName] ?? "")) {
+      afterName += 1;
+      while (/[A-Z0-9_]/.test(value[afterName] ?? "")) afterName += 1;
+    }
+    const name = afterName > start + 2 ? value.slice(start + 2, afterName) : undefined;
     // Search for "}" only after ":-", and stop once none remains, so every
     // character is scanned a bounded number of times.
     let close = -1;
@@ -243,9 +247,11 @@ const schemaFieldNames = new Set([
   "cookie", "oauth",
 ]);
 
-function reportedKey(segments: string[]): string {
+function reportedKey(segments: PathSegment[]): string {
   return segments
-    .map((segment) => (/^\d+$/.test(segment) || schemaFieldNames.has(segment) ? segment : "*"))
+    .map((segment) =>
+      typeof segment === "number" ? String(segment) : schemaFieldNames.has(segment) ? segment : "*",
+    )
     .join(".");
 }
 
@@ -258,8 +264,13 @@ function reportedEnvName(name: string): string {
   return credentialLike ? "*" : name;
 }
 
-function finding(kind: SecretFinding["kind"], file: string, segments: string[], line?: number): SecretFinding {
-  const key = sanitize(line === undefined ? reportedKey(segments) : reportedEnvName(segments[0]!));
+function finding(
+  kind: SecretFinding["kind"],
+  file: string,
+  segments: PathSegment[],
+  line?: number,
+): SecretFinding {
+  const key = sanitize(line === undefined ? reportedKey(segments) : reportedEnvName(String(segments[0])));
   return line === undefined
     ? { kind, file: sanitize(file), key }
     : { kind, file: sanitize(file), line, key };
@@ -315,21 +326,24 @@ function scanEnvFile(file: string, text: string): SecretFinding[] {
     .map(({ key, line }) => finding("plaintext", file, [key], line));
 }
 
-type Visit = (value: string | number, segments: string[], name: string) => void;
+/** Object keys are strings; array positions are numbers, so a digit-only key is never mistaken for one. */
+type PathSegment = string | number;
+
+type Visit = (value: string | number, segments: PathSegment[], name: string) => void;
 
 /**
  * Walks every string and number with its path and the name that governs it:
  * the key itself, or for array items the nearest enclosing key. Returns false
  * if the document is too deep to finish.
  */
-function walkValues(node: unknown, segments: string[], name: string, visit: Visit): boolean {
+function walkValues(node: unknown, segments: PathSegment[], name: string, visit: Visit): boolean {
   if (segments.length > maxDepth) return false;
   if (typeof node === "string" || typeof node === "number") {
     visit(node, segments, name);
     return true;
   }
   if (Array.isArray(node)) {
-    return node.every((item, index) => walkValues(item, [...segments, String(index)], name, visit));
+    return node.every((item, index) => walkValues(item, [...segments, index], name, visit));
   }
   if (node !== null && typeof node === "object") {
     return Object.entries(node).every(([key, value]) => walkValues(value, [...segments, key], key, visit));
@@ -340,7 +354,7 @@ function walkValues(node: unknown, segments: string[], name: string, visit: Visi
 function scanConfig(
   file: string,
   parsed: unknown,
-  prefix: string[] = [],
+  prefix: PathSegment[] = [],
   rootName = "",
 ): SecretFinding[] | undefined {
   const findings: SecretFinding[] = [];
@@ -358,16 +372,21 @@ function scanConfig(
 interface IncludeSite {
   target: string;
   /** Logical config path of the object holding "$include". */
-  segments: string[];
+  segments: PathSegment[];
   /** The key that governs the included content (its parent's key). */
   name: string;
 }
 
 /** Every "$include" in a document, in order, with where it is included. */
-function listIncludes(node: unknown, segments: string[] = [], name = "", found: IncludeSite[] = []): IncludeSite[] {
+function listIncludes(
+  node: unknown,
+  segments: PathSegment[] = [],
+  name = "",
+  found: IncludeSite[] = [],
+): IncludeSite[] {
   if (segments.length > maxDepth || node === null || typeof node !== "object") return found;
   if (Array.isArray(node)) {
-    node.forEach((item, index) => listIncludes(item, [...segments, String(index)], name, found));
+    node.forEach((item, index) => listIncludes(item, [...segments, index], name, found));
     return found;
   }
   for (const [key, value] of Object.entries(node)) {
@@ -466,7 +485,7 @@ export function assessPlaintextSecrets(
   // not depend on traversal order; deeper or equal revisits (cycles) stop.
   const shallowestDepth = new Map<string, number>();
   const tooDeep: string[] = [];
-  const scanConfigFile = (file: string, depth: number, prefix: string[], name: string) => {
+  const scanConfigFile = (file: string, depth: number, prefix: PathSegment[], name: string) => {
     const key = path.resolve(file);
     const previous = shallowestDepth.get(key);
     if (previous !== undefined && previous <= depth) return;
@@ -490,7 +509,11 @@ export function assessPlaintextSecrets(
             : path.resolve(path.dirname(file), site.target);
           if (insideIncludeRoot(target)) {
             // Included content sits at the site's logical path, under its key.
-            includes.push({ target, segments: [...prefix, ...site.segments], name: site.segments.length > 0 ? site.name : name });
+            includes.push({
+              target,
+              segments: [...prefix, ...site.segments],
+              name: site.segments.length > 0 ? site.name : name,
+            });
           }
         }
         return scanConfig(file, parsed, prefix, name);
