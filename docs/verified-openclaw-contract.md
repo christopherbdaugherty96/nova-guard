@@ -162,13 +162,17 @@ scanner reads, never writes:
   after `Bearer`, `Basic`, or `Token`); literal text beside a reference is
   still plaintext. Upper-case env-var-name markers such as `OPENAI_API_KEY`
   are exempt only in `apiKey` fields.
-- Inner path segments can be user-chosen map keys, so they are reported only
-  when they are lowercase or camelCase words joined by `-` or `_` (the shape of
-  OpenClaw's schema keys and provider ids) or array indexes; anything else is
-  `<redacted>`. The final field name is reported unless it looks like a
-  credential (over 64 characters, or a 12-character run mixing letters and
-  digits). Residual limit: a map key that is itself a lowercase-letters-only
-  secret would still be shown.
+- Reported paths are schema-safe. A segment is shown only if it is an array
+  index or one of nova-guard's trusted OpenClaw schema field names (config
+  sections, fixed channel ids, and secret field names, all public
+  vocabulary). Every user-controlled map key (provider ids, header names,
+  `env.vars` names, token map keys) is reported as `*`, so findings read
+  `models.providers.*.apiKey`, `models.providers.*.headers.*`, or
+  `gateway.tokens.*.token`, never a name that could itself be sensitive. A
+  field name missing from the list also becomes `*`, which costs detail, never
+  secrecy. A `.env` variable name is the key name itself and is shown unless
+  it looks like a credential (a 12-character run mixing letters and digits, or
+  over 64 characters), in which case it is `*`.
 - Every `.env` assignment with a value is reported, including one a later
   line overrides, because the earlier secret is still on disk. OpenClaw's
   `apiKey` placeholders exempt only `apiKey` fields; SecretRef markers

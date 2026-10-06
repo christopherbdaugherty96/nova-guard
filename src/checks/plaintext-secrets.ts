@@ -218,33 +218,48 @@ function sanitize(text: string): string {
   return clean.length > maxKeyLength ? `${clean.slice(0, maxKeyLength - 1)}…` : clean;
 }
 
-// Inner path segments can be user-chosen map keys, so they are shown only when
-// they are lowercase or camelCase words joined by "-" or "_" (the shape of
-// OpenClaw's schema keys and provider ids) or array indexes. The leaf is the
-// field name; it is shown unless it looks like a credential.
-const word = "[a-z]+(?:[A-Z][a-z]+)*";
-const plainWordSegment = new RegExp(`^${word}(?:[-_]${word})*$`);
-
-function isCredentialLike(name: string): boolean {
-  return (
-    name.length > 64 ||
-    (name.match(/[A-Za-z0-9]{12,}/g) ?? []).some((run) => /[0-9]/.test(run) && /[A-Za-z]/.test(run))
-  );
-}
+/**
+ * Field names reported as written: OpenClaw schema words (config sections,
+ * fixed channel ids, and secret field names). They are public vocabulary, so
+ * none can be a user's secret. Every other path segment is a user-controlled
+ * map key (a provider id, header name, env var name, ...) and is reported as
+ * "*", so `models.providers.*.apiKey`, never the provider's name. A missing
+ * entry only costs detail: an unknown field name also becomes "*".
+ */
+const schemaFieldNames = new Set([
+  "gateway", "auth", "mode", "token", "tokens", "password", "passwords",
+  "models", "providers", "apiKey", "apiKeys", "headers", "channels", "discord",
+  "slack", "telegram", "whatsapp", "signal", "imessage", "matrix", "msteams",
+  "googlechat", "irc", "line", "mattermost", "nostr", "feishu", "env", "vars",
+  "tools", "web", "search", "fetch", "webSearch", "webFetch", "endpoint",
+  "baseUrl", "agents", "defaults", "list", "plugins", "entries", "config",
+  "skills", "profiles", "key", "keys", "secret", "secrets", "secretKey",
+  "botToken", "appToken", "userToken", "signingSecret", "clientSecret",
+  "accessToken", "refreshToken", "webhookSecret", "privateKey", "accessKey",
+  "accessKeyId", "secretAccessKey", "apiToken", "authToken", "bearerToken",
+  "credential", "credentials", "serviceAccount", "serviceAccountKey", "remote",
+  "tailscale", "trustedProxy", "hooks", "memory", "browser", "session",
+  "messages", "talk", "pin", "encryptionKey", "signingKey", "sessionKey",
+  "cookie", "oauth",
+]);
 
 function reportedKey(segments: string[]): string {
   return segments
-    .map((segment, index) => {
-      if (index === segments.length - 1) return isCredentialLike(segment) ? "<redacted>" : segment;
-      return /^\d+$/.test(segment) || (plainWordSegment.test(segment) && segment.length <= 32)
-        ? segment
-        : "<redacted>";
-    })
+    .map((segment) => (/^\d+$/.test(segment) || schemaFieldNames.has(segment) ? segment : "*"))
     .join(".");
 }
 
+// A .env variable name is the key name itself and is shown, unless it looks
+// like a credential (a 12-character run mixing letters and digits, or > 64).
+function reportedEnvName(name: string): string {
+  const credentialLike =
+    name.length > 64 ||
+    (name.match(/[A-Za-z0-9]{12,}/g) ?? []).some((run) => /[0-9]/.test(run) && /[A-Za-z]/.test(run));
+  return credentialLike ? "*" : name;
+}
+
 function finding(kind: SecretFinding["kind"], file: string, segments: string[], line?: number): SecretFinding {
-  const key = sanitize(reportedKey(segments));
+  const key = sanitize(line === undefined ? reportedKey(segments) : reportedEnvName(segments[0]!));
   return line === undefined
     ? { kind, file: sanitize(file), key }
     : { kind, file: sanitize(file), line, key };
