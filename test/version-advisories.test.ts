@@ -196,6 +196,12 @@ test("a version too long to map into release order is unknown, not pass", () => 
   });
 });
 
+test("any prerelease tag sorts before its release, whatever its name", () => {
+  for (const tag of ["zzz", "zz", "zzhotfix.1", "zzz.9"]) {
+    assert.equal(assessOpenClawVersion(`2026.6.5-${tag}`).grade, "warning", tag);
+  }
+});
+
 test("ANSI and other terminal escapes do not hide the version", () => {
   for (const input of ["\x1b[32m2026.1.28\x1b[0m", "\x1b[2KOpenClaw 2026.1.28"]) {
     const result = assessOpenClawVersion(input);
