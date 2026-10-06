@@ -22,6 +22,13 @@ const fixture: readonly BundledAdvisory[] = [
     title: "Fixture: token exfiltration (CVE-2026-25253)",
   },
   {
+    ghsa: "GHSA-0000-0000-0002",
+    package: "openclaw",
+    severity: "high",
+    vulnerableVersions: ">=2026.4.7 <2026.4.9",
+    title: "Fixture: issue introduced in 2026.4.7",
+  },
+  {
     ghsa: "GHSA-0000-0000-0001",
     package: "openclaw",
     severity: "low",
@@ -99,6 +106,15 @@ test("prereleases are judged by SemVer precedence, not skipped", () => {
   assert.equal(result.grade, "critical");
   assert.equal(result.version, "2026.1.28-beta.1");
   assert.equal(assessOpenClawVersion("2026.6.5-beta.1").grade, "warning");
+});
+
+test("a numeric hotfix suffix is graded at least as severely as its release", () => {
+  // OpenClaw publishes X-1, X-2 after X, but SemVer orders them before X.
+  const hotfix = assessOpenClawVersion("2026.4.7-1");
+  assert.equal(hotfix.grade, "critical");
+  assert.deepEqual(hotfix.advisories, ["GHSA-0000-0000-0002"]);
+  assert.equal(hotfix.version, "2026.4.7-1");
+  assert.equal(assessOpenClawVersion("2026.4.7-beta.1").grade, "pass");
 });
 
 test("ANSI and other terminal escapes do not hide the version", () => {
