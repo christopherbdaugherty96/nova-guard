@@ -185,3 +185,67 @@ test("Tailscale Serve reports tailnet exposure", () => {
     },
   );
 });
+
+test("unauthenticated LAN binding outranks Tailscale Serve", () => {
+  const result = assessGatewayExposure({
+    gateway: {
+      bind: "lan",
+      auth: { mode: "none" },
+      tailscale: { mode: "serve" },
+    },
+  });
+  assert.equal(result.grade, "critical");
+  assert.match(result.summary, /LAN|non-loopback/i);
+  assert.match(result.summary, /tailnet|Serve/i);
+});
+
+test("unauthenticated wildcard custom binding outranks Tailscale Serve", () => {
+  const result = assessGatewayExposure({
+    gateway: {
+      bind: "custom",
+      customBindHost: "0.0.0.0",
+      auth: { mode: "none" },
+      tailscale: { mode: "serve" },
+    },
+  });
+  assert.equal(result.grade, "critical");
+  assert.match(result.summary, /custom|non-loopback/i);
+  assert.match(result.summary, /tailnet|Serve/i);
+});
+
+test("Funnel with an environment reference is warning, not critical", () => {
+  const result = assessGatewayExposure({
+    gateway: {
+      tailscale: { mode: "funnel" },
+      auth: { mode: "password", password: "${OPENCLAW_GATEWAY_PASSWORD}" },
+    },
+  });
+  assert.equal(result.grade, "warning");
+  assert.match(result.summary, /password.*not verifiable/i);
+});
+
+test("Funnel with default auth mode is warning, not critical", () => {
+  const result = assessGatewayExposure({
+    gateway: { tailscale: { mode: "funnel" } },
+  });
+  assert.equal(result.grade, "warning");
+  assert.match(result.summary, /password.*not verifiable/i);
+});
+
+test("Funnel with an explicitly non-password mode is critical", () => {
+  const result = assessGatewayExposure({
+    gateway: {
+      tailscale: { mode: "funnel" },
+      auth: { mode: "token", token: "configured" },
+    },
+  });
+  assert.equal(result.grade, "critical");
+});
+
+test("unrecognized Tailscale mode is unknown", () => {
+  const result = assessGatewayExposure({
+    gateway: { tailscale: { mode: "FUNNEL" } },
+  });
+  assert.equal(result.grade, "unknown");
+  assert.match(result.summary, /Tailscale|unrecognized/i);
+});
