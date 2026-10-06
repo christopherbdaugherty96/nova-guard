@@ -53,6 +53,9 @@ Sources:
   as affected and `2026.1.29` as patched.
 - The vulnerability list will be bundled and dated. A local scan does not need
   live advisory access.
+- The exact `openclaw --version` output format is not documented, so the
+  scanner extracts a single `YYYY.M.D[-prerelease]` token and reports
+  `unknown` when none, or more than one distinct version, is present.
 
 Sources:
 
