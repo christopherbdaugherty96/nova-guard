@@ -215,23 +215,70 @@ Sources:
 
 ## Skills
 
-Relevant file-backed roots include:
+Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
+(`src/skills/loading/*`, `src/skills/security/scanner.ts`,
+`src/security/audit.deep.runtime.ts`, `src/agents/agent-scope-config.ts`).
 
-- `<workspace>/skills`
-- `<workspace>/.agents/skills`
-- `~/.agents/skills`
-- `<state-dir>/skills`
-- directories named by `skills.load.extraDirs`
+Skill roots (`workspace-skill-sources.ts`), all scanned:
 
-Each skill is a directory with `SKILL.md`. Symlink and precedence rules mean a
-scanner must report the resolved root and avoid following arbitrary filesystem
-links outside the discovered roots.
+- `<workspace>/skills` and `<workspace>/.agents/skills` for every agent
+  workspace. A workspace is the agent entry's `workspace`, else
+  `<agents.defaults.workspace>/<agentId>`, else `<stateDir>/workspace-<agentId>`;
+  the default agent may use `agents.defaults.workspace` itself or the default
+  workspace (`OPENCLAW_WORKSPACE_DIR`, else `<stateDir>/workspace`). Rosters are
+  `agents.entries` (keys are ids) or `agents.list` (entries carry `id`); with no
+  roster the agent is `main`. Every candidate is scanned.
+- `<stateDir>/skills` (managed) and `~/.agents/skills` (personal). OpenClaw
+  loads the personal root only with the default state directory; nova-guard
+  always scans it.
+- `skills.load.extraDirs`.
+- Each agent's `<agentDir>/workshop-skills`, where `agentDir` is the entry's
+  `agentDir` or `<stateDir>/agents/<agentId>/agent`; every existing
+  `<stateDir>/agents/*/agent` is included too.
+- Not scanned in v0.1: bundled skills (OpenClaw's audit skips them too) and
+  plugin-provided skills (OpenClaw audits those as plugin code).
+
+A skill is a directory with `SKILL.md`. A root can itself be a skill, may hold
+a nested `skills/` directory, and may group skills up to six levels deep;
+dot-entries and `node_modules` are skipped. Managed and personal roots follow
+symlinks anywhere; other roots follow a symlink only when its real target stays
+inside the root or inside `skills.load.allowSymlinkTargets` (workshop roots
+allow no targets). A skill reached by two routes is scanned once.
+
+Rules: OpenClaw's installed-skill code-safety scan (`skills.code_safety`, run
+by `openclaw security audit --deep`), ported unchanged with attribution in
+`src/checks/skill-scan-rules.ts`:
+
+- Script files (`.js .ts .mjs .cjs .mts .cts .jsx .tsx`) and `SKILL.md`:
+  `dangerous-exec` (child_process calls, with OpenClaw's import-provenance
+  rules), `dynamic-code-execution`, `crypto-mining`, `env-harvesting`
+  (critical); `suspicious-network`, `potential-exfiltration`,
+  `obfuscated-code` (warn).
+- `SKILL.md` text only: `literal-secret`, `shell-pipe-to-shell`,
+  `secret-exfiltration` (critical); `destructive-delete`, `unsafe-permissions`
+  (warn).
+- At most 32 hits per rule per file (then one `<rule>-truncated` hit), 500
+  script files per skill, 100,000 directory entries per skill; symlinks inside
+  a skill are not followed.
+
+Reports give the skill directory, file, line, rule id, and severity only:
+never the matched text (OpenClaw shows it as evidence) and never the skill's
+`name`. Grades: `critical` if any critical rule matches, `warning` if only warn
+rules match, `unknown` if anything could not be evaluated, else `pass`.
+Unknown, where OpenClaw silently skips or fails: a `SKILL.md` over 256,000
+bytes or a script file over 1 MiB, more than 500 script files, an unreadable
+root, directory, or file, a non-regular `SKILL.md`, a relative configured path
+(OpenClaw resolves it against its own working directory), and an unreadable
+config. Missing roots are not unknown.
 
 Sources:
 
 - <https://docs.openclaw.ai/skills>
 - <https://docs.openclaw.ai/tools/skills-config>
-- <https://docs.openclaw.ai/cli/skills>
+- <https://docs.openclaw.ai/gateway/security/audit-checks>
+- <https://github.com/openclaw/openclaw/blob/b8324c64acf5979602711163cb4b5c01ea557388/src/skills/security/scanner.ts>
+- <https://github.com/openclaw/openclaw/blob/b8324c64acf5979602711163cb4b5c01ea557388/src/skills/loading/workspace-skill-sources.ts>
+- <https://github.com/openclaw/openclaw/blob/b8324c64acf5979602711163cb4b5c01ea557388/src/skills/loading/skill-root-discovery.ts>
 
 ## Spend and usage
 

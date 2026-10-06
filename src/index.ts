@@ -26,3 +26,12 @@ export type {
   SecretFinding,
   SecretLocations,
 } from "./checks/plaintext-secrets.js";
+export { assessRiskySkills, nodeSkillFs } from "./checks/risky-skills.js";
+export type {
+  RiskySkillFinding,
+  RiskySkillsResult,
+  SkillConfigInput,
+  SkillFs,
+  SkillLocations,
+  SkillUnknownReason,
+} from "./checks/risky-skills.js";
