@@ -79,6 +79,15 @@ export function assessOpenClawVersion(
     return unknown("OpenClaw version output was not recognized.");
   }
 
+  if (advisories.some((advisory) => !supportedRange.test(advisory.vulnerableVersions))) {
+    return {
+      grade: "unknown",
+      version,
+      advisories: [],
+      summary: "Bundled advisory data contains a range this scanner cannot evaluate.",
+    };
+  }
+
   const ordered = toReleaseOrder(version);
   const matched = advisories.filter((advisory) =>
     semver.satisfies(ordered, rangeInReleaseOrder(advisory.vulnerableVersions), {
@@ -138,8 +147,17 @@ function toReleaseOrder(version: string): string {
   });
 }
 
+/**
+ * Only plain comparator sets ("<2026.2.1", ">=2026.1.5 <=2026.5.3-1") are
+ * mapped token by token. Hyphen ranges, "||", "^", "~" and x-ranges would be
+ * expanded by semver after mapping and lose the publication-order meaning.
+ */
+const comparator = "(?:<=|>=|<|>|=)?\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?";
+export const supportedRange = new RegExp(`^${comparator}(?: ${comparator})*$`);
+
 const comparatorToken = /(<=|>=|<|>|=)?(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?/g;
-const lastHotfix = "zzhotfix.999999999";
+// "zzz" sorts after every "zzhotfix.N", so "<X-zzz" covers all of X's hotfixes.
+const afterAllHotfixes = "zzz";
 const orderedRanges = new Map<string, string>();
 
 /**
@@ -156,7 +174,7 @@ function rangeInReleaseOrder(range: string): string {
       (_match, operator: string | undefined, core: string, prerelease?: string) => {
         const op = operator ?? "";
         if (prerelease === undefined) {
-          return op === "<=" ? `${op}${core}-${lastHotfix}` : `${op}${core}-zz`;
+          return op === "<=" ? `<${core}-${afterAllHotfixes}` : `${op}${core}-zz`;
         }
         if (prerelease === "0") {
           return `${op}${core}-0`;

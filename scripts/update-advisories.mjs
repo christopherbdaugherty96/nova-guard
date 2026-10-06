@@ -12,6 +12,9 @@ const packages = ["openclaw", "clawdbot", "moltbot"];
 const registry = "https://registry.npmjs.org/";
 const endpoint = `${registry}-/npm/v1/security/advisories/bulk`;
 const severities = new Set(["critical", "high", "moderate", "low"]);
+// Must match supportedRange in src/checks/version-advisories.ts.
+const comparator = String.raw`(?:<=|>=|<|>|=)?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`;
+const supportedRange = new RegExp(`^${comparator}(?: ${comparator})*$`);
 
 const request = {};
 for (const name of packages) {
@@ -55,8 +58,11 @@ for (const name of packages) {
       throw new Error(`${ghsa}: unexpected severity ${advisory.severity}`);
     }
     // An invalid range would silently never match, a quiet false pass.
-    if (semver.validRange(advisory.vulnerable_versions) === null) {
-      throw new Error(`${ghsa}: invalid range ${advisory.vulnerable_versions}`);
+    if (
+      semver.validRange(advisory.vulnerable_versions) === null ||
+      !supportedRange.test(advisory.vulnerable_versions)
+    ) {
+      throw new Error(`${ghsa}: unsupported range ${advisory.vulnerable_versions}`);
     }
     advisories.push({
       ghsa,

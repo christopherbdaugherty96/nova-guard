@@ -68,6 +68,10 @@ Sources:
   bound keeps SemVer's meaning of every prerelease of `X` (no `X-0` hotfix has
   been published). Against every published version this drops only matches
   where a hotfix follows the release that fixed the issue, and no grade falls.
+- Only plain comparator sets (for example `>=2026.1.5 <=2026.5.3-1`) are
+  supported. Hyphen ranges, `||`, `^`, `~`, and x-ranges would be expanded by
+  `semver` after the mapping, so the generator refuses them and the scanner
+  reports `unknown` if bundled data ever contains one.
   The generator refuses to write a bundle with an empty package list, an
   unknown severity, or a range `semver` cannot parse.
 - `openclaw --version` prints one line on stdout. Older releases print the
