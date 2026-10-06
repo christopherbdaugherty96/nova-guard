@@ -79,16 +79,11 @@ export function assessOpenClawVersion(
     return unknown("OpenClaw version output was not recognized.");
   }
 
-  // OpenClaw publishes numeric hotfixes (X-1, X-2) after release X, but SemVer
-  // orders them before X. Grade a hotfix as both itself and X so neither an
-  // advisory introduced in X nor one ending at X-N is missed.
-  const candidates = prerelease !== undefined && /^\d+$/.test(prerelease)
-    ? [version, `${year}.${month}.${counter}`]
-    : [version];
+  const ordered = toReleaseOrder(version);
   const matched = advisories.filter((advisory) =>
-    candidates.some((candidate) =>
-      semver.satisfies(candidate, advisory.vulnerableVersions, { includePrerelease: true }),
-    ),
+    semver.satisfies(ordered, rangeInReleaseOrder(advisory.vulnerableVersions), {
+      includePrerelease: true,
+    }),
   );
   if (matched.length === 0) {
     return {
@@ -122,6 +117,58 @@ export function assessOpenClawVersion(
       severeCount > 0 ? `${severeCount} critical or high` : "moderate or low"
     }); upgrade to a current release.`,
   };
+}
+
+/**
+ * OpenClaw publishes numeric hotfixes after their release (X, then X-1, X-2),
+ * but SemVer orders X-1 before X. Versions and range bounds are mapped to an
+ * order that matches publication:
+ *   X-beta.1 < X (X-zz) < X-1 (X-zzhotfix.1) < X-2 < next release.
+ * "zz" sorts after any alphabetic prerelease tag OpenClaw uses (alpha, beta).
+ */
+const numericHotfix = /^\d+$/;
+const versionToken = /(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?/g;
+
+function toReleaseOrder(version: string): string {
+  return version.replace(versionToken, (_match, core: string, prerelease?: string) => {
+    if (prerelease === undefined) {
+      return `${core}-zz`;
+    }
+    return numericHotfix.test(prerelease) ? `${core}-zzhotfix.${prerelease}` : `${core}-${prerelease}`;
+  });
+}
+
+const comparatorToken = /(<=|>=|<|>|=)?(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?/g;
+const lastHotfix = "zzhotfix.999999999";
+const orderedRanges = new Map<string, string>();
+
+/**
+ * Maps every comparator in a range into release order. Two bounds keep a
+ * conservative meaning: "<=X" also covers X's hotfixes, because the advisory
+ * does not say a hotfix carried the fix, and "-0" stays SemVer's idiom for
+ * "every prerelease of X" (OpenClaw has never published an X-0 hotfix).
+ */
+function rangeInReleaseOrder(range: string): string {
+  let ordered = orderedRanges.get(range);
+  if (ordered === undefined) {
+    ordered = range.replace(
+      comparatorToken,
+      (_match, operator: string | undefined, core: string, prerelease?: string) => {
+        const op = operator ?? "";
+        if (prerelease === undefined) {
+          return op === "<=" ? `${op}${core}-${lastHotfix}` : `${op}${core}-zz`;
+        }
+        if (prerelease === "0") {
+          return `${op}${core}-0`;
+        }
+        return numericHotfix.test(prerelease)
+          ? `${op}${core}-zzhotfix.${prerelease}`
+          : `${op}${core}-${prerelease}`;
+      },
+    );
+    orderedRanges.set(range, ordered);
+  }
+  return ordered;
 }
 
 function unknown(summary: string): VersionAdvisoryResult {

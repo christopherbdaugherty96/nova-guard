@@ -61,7 +61,13 @@ Sources:
   apply to the shared calendar version line. A match with any critical or high
   advisory grades `critical`; only moderate or low grades `warning`.
 - OpenClaw publishes numeric hotfixes (`X-1`, `X-2`) after release `X`, but
-  SemVer orders them before `X`, so a hotfix is graded as both itself and `X`.
+  SemVer orders them before `X`. Versions and range bounds are therefore
+  mapped to publication order (`X-beta.1` < `X` < `X-1` < `X-2` < next release)
+  before matching. Two bounds stay conservative: `<=X` also covers `X`'s
+  hotfixes (the advisory does not say a hotfix carried the fix), and a `-0`
+  bound keeps SemVer's meaning of every prerelease of `X` (no `X-0` hotfix has
+  been published). Against every published version this drops only matches
+  where a hotfix follows the release that fixed the issue, and no grade falls.
   The generator refuses to write a bundle with an empty package list, an
   unknown severity, or a range `semver` cannot parse.
 - `openclaw --version` prints one line on stdout. Older releases print the
