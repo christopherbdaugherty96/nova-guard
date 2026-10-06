@@ -229,17 +229,21 @@ Skill roots (`workspace-skill-sources.ts`), all scanned:
   `agents.entries` (keys are ids) or `agents.list` (entries carry `id`); with no
   roster the agent is `main`. Every candidate is scanned.
 - `<stateDir>/skills` (managed) and `~/.agents/skills` (personal). OpenClaw
-  loads the personal root only with the default state directory; nova-guard
-  always scans it.
+  loads the personal root only with the default state directory, from the OS
+  home; nova-guard always scans it, under both the OS home and OpenClaw's
+  effective home (`OPENCLAW_HOME`), which is the home `~` in config expands to.
 - `skills.load.extraDirs`.
 - Each agent's `<agentDir>/workshop-skills`, where `agentDir` is the entry's
   `agentDir` or `<stateDir>/agents/<agentId>/agent`; every existing
-  `<stateDir>/agents/*/agent` is included too.
+  `<stateDir>/agents/*/agent` is included too. Workshop roots are containers:
+  their own `SKILL.md` never hides the skills inside them. Any object in
+  `agents.list` is an agent; one without an `id` is `main`.
 - Not scanned in v0.1: bundled skills (OpenClaw's audit skips them too) and
   plugin-provided skills (OpenClaw audits those as plugin code).
 
 A skill is a directory with `SKILL.md`. A root can itself be a skill, may hold
-a nested `skills/` directory, and may group skills up to six levels deep;
+a nested `skills/` directory, and may group skills up to six levels deep (up to
+eight levels below the root in all; nova-guard looks nine deep);
 dot-entries and `node_modules` are skipped. Managed and personal roots follow
 symlinks anywhere; other roots follow a symlink only when its real target stays
 inside the root or inside `skills.load.allowSymlinkTargets` (workshop roots
@@ -259,7 +263,12 @@ by `openclaw security audit --deep`), ported unchanged with attribution in
   (warn).
 - At most 32 hits per rule per file (then one `<rule>-truncated` hit), 500
   script files per skill, 100,000 directory entries per skill; symlinks inside
-  a skill are not followed.
+  a skill are not followed. OpenClaw matches `child_process` aliases with one
+  regular expression per alias per line; nova-guard finds the same calls in
+  one pass, so a file with thousands of aliases cannot stall the scan.
+- A file reached through several skills (nested skills, symlinks into the same
+  tree) is read and scanned once. Script-file walks stop after 1,000,000
+  directory entries across all skills; the rest is unknown.
 
 Reports give the skill directory, file, line, rule id, and severity only:
 never the matched text (OpenClaw shows it as evidence) and never the skill's

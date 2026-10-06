@@ -25,7 +25,10 @@ import { isScannable, scanSkillContent, scanSource, type SkillRuleSeverity } fro
 
 export interface SkillLocations {
   stateDir: string;
+  /** OpenClaw's effective home (OPENCLAW_HOME, else the OS home); "~" in config expands to it. */
   homeDir: string;
+  /** The OS home, when it differs from homeDir; ~/.agents/skills lives here. */
+  osHomeDir?: string;
   /** OPENCLAW_WORKSPACE_DIR, when set; otherwise <stateDir>/workspace. */
   workspaceDir?: string;
 }
@@ -119,8 +122,11 @@ const maxSkillFileBytes = 256_000;
 const maxScriptFileBytes = 1024 * 1024;
 const maxScriptFiles = 500;
 const maxScanEntries = 100_000;
-// A nested skills/ directory plus OpenClaw's six grouped levels.
-const maxDiscoveryDepth = 7;
+// Deepest skill OpenClaw loads: root/skills (nested root), a child "skills"
+// at grouped depth 0, then six grouped levels = 8. One more for margin.
+const maxDiscoveryDepth = 9;
+// Total script-file directory entries walked across all skills.
+const maxTotalScanEntries = 1_000_000;
 const maxDiscoveryDirsPerRoot = 20_000;
 const maxReportedPathLength = 4096;
 
@@ -129,6 +135,8 @@ type SymlinkPolicy = "any" | "contained" | "contained-or-allowed";
 interface SkillRoot {
   dir: string;
   symlinks: SymlinkPolicy;
+  /** Workshop roots hold skills; the root itself is never one. */
+  container?: boolean;
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -221,7 +229,10 @@ export function assessRiskySkills(
       }
     }
   } else if (Array.isArray(agents.list)) {
-    for (const entry of agents.list) if (isRecord(entry)) roster.push(entry);
+    // OpenClaw accepts any non-null object here; one without an id is "main".
+    for (const entry of agents.list) {
+      if (typeof entry === "object" && entry !== null) roster.push(entry as Record<string, unknown>);
+    }
   } else if (!Object.hasOwn(agents, "list") || agents.list === undefined) {
     roster.push({ id: "main" });
   }
@@ -264,9 +275,11 @@ export function assessRiskySkills(
     if (resolved) roots.push({ dir: resolved, symlinks: "contained-or-allowed" });
   }
   for (const agentDir of agentDirs) {
-    roots.push({ dir: path.join(agentDir, "workshop-skills"), symlinks: "contained" });
+    roots.push({ dir: path.join(agentDir, "workshop-skills"), symlinks: "contained", container: true });
   }
   roots.push({ dir: path.join(locations.stateDir, "skills"), symlinks: "any" });
+  // OpenClaw's personal root uses the OS home; both homes are scanned.
+  roots.push({ dir: path.join(locations.osHomeDir ?? locations.homeDir, ".agents", "skills"), symlinks: "any" });
   roots.push({ dir: path.join(locations.homeDir, ".agents", "skills"), symlinks: "any" });
   for (const workspace of workspaces) {
     roots.push({ dir: path.join(workspace, ".agents", "skills"), symlinks: "contained-or-allowed" });
@@ -316,7 +329,7 @@ export function assessRiskySkills(
         markUnknown(rootDir, "discovery-truncated");
         break;
       }
-      if (hasSkillFile(dir)) {
+      if (!(root.container && depth === 0) && hasSkillFile(dir)) {
         const real = tryRealpath(dir) ?? dir;
         if (!skillsByRealPath.has(real)) skillsByRealPath.set(real, dir);
         continue;
@@ -370,6 +383,17 @@ export function assessRiskySkills(
       });
     }
   };
+  // A file reached through several skills (nested skills, links to the same
+  // tree) is read and scanned once, keyed by its real path.
+  const scanCache = new Map<string, ReturnType<typeof scanSource> | undefined>();
+  const scanOnce = (file: string, maxBytes: number, scan: (text: string) => ReturnType<typeof scanSource>) => {
+    const key = `${maxBytes}\u0000${tryRealpath(file) ?? file}`;
+    if (!scanCache.has(key)) {
+      const text = readFor(file, maxBytes);
+      scanCache.set(key, text === undefined ? undefined : scan(text));
+    }
+    return scanCache.get(key);
+  };
   const readFor = (file: string, maxBytes: number): string | undefined => {
     let result: SkillTextRead;
     try {
@@ -383,11 +407,15 @@ export function assessRiskySkills(
     return result.status === "ok" ? result.text : undefined;
   };
 
+  let totalScanEntries = 0;
   for (const skillDir of skillsByRealPath.values()) {
     // SKILL.md: OpenClaw applies both its skill-text and source rules.
     const skillFile = path.join(skillDir, "SKILL.md");
-    const content = readFor(skillFile, maxSkillFileBytes);
-    if (content !== undefined) report(skillDir, skillFile, [...scanSkillContent(content), ...scanSource(content)]);
+    const skillHits = scanOnce(skillFile, maxSkillFileBytes, (text) => [
+      ...scanSkillContent(text),
+      ...scanSource(text),
+    ]);
+    if (skillHits) report(skillDir, skillFile, skillHits);
 
     // Script files, walked like OpenClaw's scanner: no symlinks, no dot
     // entries, no node_modules.
@@ -406,7 +434,8 @@ export function assessRiskySkills(
       }
       for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
         entriesSeen += 1;
-        if (entriesSeen > maxScanEntries) {
+        totalScanEntries += 1;
+        if (entriesSeen > maxScanEntries || totalScanEntries > maxTotalScanEntries) {
           truncated = true;
           break;
         }
@@ -424,8 +453,8 @@ export function assessRiskySkills(
     }
     if (truncated) markUnknown(skillDir, "scan-truncated");
     for (const file of files.slice(0, maxScriptFiles)) {
-      const source = readFor(file, maxScriptFileBytes);
-      if (source !== undefined) report(skillDir, file, scanSource(source));
+      const hits = scanOnce(file, maxScriptFileBytes, scanSource);
+      if (hits) report(skillDir, file, hits);
     }
   }
 

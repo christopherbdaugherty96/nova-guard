@@ -126,10 +126,6 @@ const skillContentRules: SourceRule[] = [
 
 const childProcessExecMethods = new Set(["exec", "execSync", "spawn", "spawnSync", "execFile", "execFileSync"]);
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 // Only imports/requires establish provenance; unrelated aliases must not match.
 function collectChildProcessBindings(source: string): {
   methodAliases: Set<string>;
@@ -167,13 +163,17 @@ function collectChildProcessBindings(source: string): {
 }
 
 // Report every standalone alias call in source order, excluding object members.
+// OpenClaw builds one `(?<![\w.])<alias>\s*\(` pattern per alias per line,
+// which costs aliases x lines. An alias is a whole identifier (\w+), so
+// matching every standalone identifier call once and looking it up in the
+// alias set finds exactly the same calls in linear time.
+const standaloneCall = /(?<![\w.])(\w+)\s*\(/g;
 function matchAliasedChildProcessCalls(line: string, methodAliases: Set<string>): number[] {
   const calls: number[] = [];
-  for (const alias of methodAliases) {
-    const pattern = new RegExp(`(?<![\\w.])${escapeRegExp(alias)}\\s*\\(`, "g");
-    for (const callMatch of line.matchAll(pattern)) calls.push(callMatch.index);
+  for (const callMatch of line.matchAll(standaloneCall)) {
+    if (methodAliases.has(callMatch[1] ?? "")) calls.push(callMatch.index ?? 0);
   }
-  return calls.sort((a, b) => a - b);
+  return calls;
 }
 
 // Retain the conventional child_process names alongside proven namespace aliases.
