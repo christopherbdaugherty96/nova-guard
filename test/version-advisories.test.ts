@@ -66,6 +66,26 @@ test("an unparseable version token cannot be bypassed by another date", () => {
   }
 });
 
+test("a version glued to other text cannot be bypassed by another date", () => {
+  for (const input of [
+    "openclaw_2026.1.28 (built 2026.2.3)",
+    "openclaw.2026.1.28 built 2026.2.3",
+    "openclawv2026.1.28 built 2026.2.3",
+    "12026.1.28 built 2026.2.3",
+    "\x1b[2K2026.1.28 built 2026.2.3",
+    "\uff12\uff10\uff12\uff16.\uff11.\uff12\uff18 built 2026.2.3",
+    "openclaw 2026.1 built 2026.2.3",
+  ]) {
+    assert.equal(assessOpenClawVersion(input).grade, "unknown", JSON.stringify(input));
+  }
+});
+
+test("long runs of dots are handled in linear time", () => {
+  const started = performance.now();
+  assessOpenClawVersion(`2026.1.1${".".repeat(50_000)}x`);
+  assert.ok(performance.now() - started < 250);
+});
+
 test("ANSI color codes do not hide the version", () => {
   const result = assessOpenClawVersion("\x1b[32m2026.1.28\x1b[0m");
   assert.equal(result.grade, "critical");
