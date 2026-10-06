@@ -159,6 +159,17 @@ test("maintenance counters are not limited to two digits", () => {
   assert.equal(assessOpenClawVersion("2025.12.100").grade, "critical");
 });
 
+test("very long counters are compared without precision loss", () => {
+  assert.equal(
+    assessOpenClawVersion("2026.1.9007199254740992 2026.1.9007199254740993").grade,
+    "unknown",
+  );
+  const long = `2026.6.${"9".repeat(400)}`;
+  const result = assessOpenClawVersion(long);
+  assert.equal(result.grade, "pass");
+  assert.equal(result.version, long);
+});
+
 test("missing version output is unknown, not pass", () => {
   for (const input of [undefined, "", "   \n"]) {
     assert.deepEqual(assessOpenClawVersion(input), {
