@@ -56,19 +56,25 @@ Sources:
 - `openclaw --version` prints one line on stdout. Older releases print the
   bare version (verified at `v2026.1.24`, published as `clawdbot`
   `2026.1.24-0`, and at `v2026.1.29` and `v2026.1.30`). Current `main` prints `OpenClaw <version>` or
-  `OpenClaw <version> (<7-hex commit>)`; on failure they write to stderr and
+  `OpenClaw <version> (<7-hex commit>)` (the CLI truncates the commit to seven
+  lowercase hex digits); on failure they write to stderr and
   exit 1. The scanner grades only output whose entire trimmed text, after
   stripping terminal escapes, is one of these shapes. Anything else, including
   other date-like text, is `unknown`. Output over 4 KiB is `unknown`.
 - Versions are `YYYY.M.N`. `N` is usually the day, but Extended Stable releases
   use it as a maintenance counter (official tags `v2026.6.33` to `v2026.8.35`),
   so the scanner enforces only month 1-12 and a non-zero `N` of any length.
+- Numbers must be SemVer-canonical (no leading zeros in the version or in
+  numeric prerelease identifiers), so `2026.01.029` or `2026.1.30-01` is
+  `unknown`.
 
 Sources:
 
 - <https://github.com/openclaw/openclaw/blob/main/docs/platforms/windows.md>
 - <https://github.com/openclaw/openclaw/blob/main/src/entry.version-fast-path.ts>
 - <https://github.com/openclaw/openclaw/blob/v2026.1.24/src/cli/program/help.ts>
+- <https://github.com/openclaw/openclaw/blob/main/src/infra/git-commit.ts>
+- <https://semver.org/spec/v2.0.0.html>
 - <https://github.com/advisories/GHSA-g8p2-7wf7-98mq>
 
 ## Secrets

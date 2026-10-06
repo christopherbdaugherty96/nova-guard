@@ -31,16 +31,22 @@ export const bundledAdvisories: readonly VersionAdvisory[] = [
 const maxOutputLength = 4096;
 // CSI sequences (colors, cursor and line control) and OSC sequences.
 const terminalEscape = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+// SemVer-canonical numbers: no leading zeros in the year, month, counter, or
+// numeric prerelease identifiers (build metadata may have them).
+const prereleaseIdentifier = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
 const versionPattern =
-  "(\\d{4})\\.(\\d{1,2})\\.(\\d+)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+  `([1-9]\\d{3})\\.([1-9]|1[0-2])\\.([1-9]\\d*)` +
+  `(?:-(${prereleaseIdentifier}(?:\\.${prereleaseIdentifier})*))?` +
+  `(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?`;
 /**
  * The whole output must be one of the line shapes OpenClaw is verified to
  * print for `--version`, so no other date-like text can stand in for it:
  * - the bare version (commander default, clawdbot through 2026.1.x);
- * - `OpenClaw <version>` or `OpenClaw <version> (<commit>)` (current CLI).
+ * - `OpenClaw <version>` or `OpenClaw <version> (<commit>)` (current CLI),
+ *   where the CLI truncates the commit to seven lowercase hex digits.
  */
 const versionLine = new RegExp(
-  `^(?:${versionPattern}|OpenClaw ${versionPattern}(?: \\([0-9a-f]{7,40}\\))?)$`,
+  `^(?:${versionPattern}|OpenClaw ${versionPattern}(?: \\([0-9a-f]{7}\\))?)$`,
 );
 
 // BigInt keeps arbitrarily long maintenance counters exact.
