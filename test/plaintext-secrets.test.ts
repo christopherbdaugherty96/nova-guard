@@ -33,7 +33,7 @@ const SECRETS = [SECRET_A, SECRET_B, SECRET_C, SECRET_D];
 
 function fakeReader(
   files: Record<string, string | "UNREADABLE">,
-  directories: Record<string, string[]> = {},
+  directories: Record<string, string[] | "unreadable"> = {},
 ): SecretFileReader {
   return {
     readText(file) {
@@ -409,6 +409,38 @@ test("numeric credentials under token, key, and pin names are plaintext", () => 
 test("a header built only from references and separators is not plaintext", () => {
   const config = JSON.stringify({ h: { Authorization: "Basic ${USER_NAME}:${USER_PASSWORD}" } });
   assert.equal(assessPlaintextSecrets(locations, fakeReader({ [configPath]: config })).grade, "pass");
+});
+
+test("an unlistable agents directory makes the result unknown, not pass", () => {
+  const agentsRoot = path.join(stateDir, "agents");
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({ [mainModels]: JSON.stringify({ providers: {} }) }, { [agentsRoot]: "unreadable" }),
+  );
+  assert.equal(result.grade, "unknown");
+  assert.deepEqual(result.unreadable, [agentsRoot]);
+});
+
+test("a fallback longer than 512 characters is still a plaintext fallback", () => {
+  const longJwt = `eyJ${"a".repeat(2000)}`;
+  const config = JSON.stringify({ tools: { search: { endpoint: `\${SEARCH_API_KEY:-${longJwt}}` } } });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [`fallback ${configPath} tools.search.endpoint`]);
+  assertNoLeak(result, [longJwt.slice(0, 40)]);
+});
+
+test("models.json findings keep the fallback kind", () => {
+  const models = JSON.stringify({
+    providers: {
+      o: { apiKey: `\${OPENAI_API_KEY:-${SECRET_A}}`, headers: { "x-api-key": `\${X_KEY:-${SECRET_B}}` } },
+    },
+  });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [mainModels]: models }));
+  assert.deepEqual(keys(result), [
+    `fallback ${mainModels} providers.o.apiKey`,
+    `fallback ${mainModels} providers.o.headers.x-api-key`,
+  ]);
+  assertNoLeak(result);
 });
 
 test("crafted unterminated references are handled in linear time", () => {
