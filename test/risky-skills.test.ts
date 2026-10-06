@@ -604,3 +604,27 @@ test("symlinks into deep trees are charged by depth, so they cannot stall discov
     assert.deepEqual(result.unknown, [{ path: managed, reason: "discovery-truncated" }]);
   });
 });
+
+test("time spent resolving discovery symlinks is bounded, failed resolutions included", posixOnly, () => {
+  fixture((root, at) => {
+    const managed = path.join(at.stateDir, "skills");
+    mkdirSync(managed, { recursive: true });
+    for (let i = 0; i < 6; i += 1) symlinkSync(path.join(root, "missing", String(i)), path.join(managed, `l${i}`));
+    let clock = 0;
+    let resolutions = 0;
+    const slow: SkillFs = {
+      ...nodeSkillFs,
+      realpath(file) {
+        if (path.basename(file).startsWith("l")) {
+          resolutions += 1;
+          clock += 1000;
+        }
+        return nodeSkillFs.realpath(file);
+      },
+    };
+    const result = assessRiskySkills(at, none, slow, { maxSymlinkMillis: 2500, now: () => clock });
+    assert.equal(resolutions, 3);
+    assert.equal(result.grade, "unknown");
+    assert.deepEqual(result.unknown, [{ path: managed, reason: "discovery-truncated" }]);
+  });
+});
