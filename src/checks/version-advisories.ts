@@ -40,7 +40,8 @@ const strictVersion =
 // CSI sequences (colors, cursor and line control) and OSC sequences.
 const terminalEscape = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
-type Core = [number, number, number];
+// BigInt keeps arbitrarily long maintenance counters exact.
+type Core = [bigint, bigint, bigint];
 
 export function assessOpenClawVersion(
   versionOutput: string | undefined,
@@ -63,7 +64,7 @@ export function assessOpenClawVersion(
       return unknown("OpenClaw version output was not recognized.");
     }
     const [, year, month, day, prerelease] = match;
-    const core: Core = [Number(year), Number(month), Number(day)];
+    const core: Core = [BigInt(year), BigInt(month), BigInt(day)];
     if (!isReleaseVersion(core)) {
       return unknown("OpenClaw version output was not recognized.");
     }
@@ -134,7 +135,7 @@ function unknown(summary: string): VersionAdvisoryResult {
  * the month range and a non-zero counter are enforced.
  */
 function isReleaseVersion([, month, counter]: Core): boolean {
-  return month >= 1 && month <= 12 && counter >= 1;
+  return month >= 1n && month <= 12n && counter >= 1n;
 }
 
 function trimTrailingDots(value: string): string {
@@ -146,14 +147,14 @@ function trimTrailingDots(value: string): string {
 }
 
 function parseCore(value: string): Core {
-  const [year, month, day] = value.split(".").map(Number);
-  return [year, month, day];
+  const [year, month, counter] = value.split(".").map((part) => BigInt(part));
+  return [year, month, counter];
 }
 
 function compareCore(a: Core, b: Core): number {
   for (let i = 0; i < 3; i += 1) {
     if (a[i] !== b[i]) {
-      return a[i] - b[i];
+      return a[i] < b[i] ? -1 : 1;
     }
   }
   return 0;
