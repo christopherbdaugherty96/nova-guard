@@ -32,7 +32,8 @@ export const bundledAdvisories: readonly VersionAdvisory[] = [
 // as a whole, so a real version glued to other text, written in other digits,
 // or truncated can never be skipped in favour of another date in the output.
 const wordPattern = /[\p{L}\p{N}\p{M}_.+-]+/gu;
-const looksLikeVersion = /(?<!\p{Nd})\p{Nd}{4,}\.\p{Nd}/u;
+// A four-digit run followed by a dot starts a version, even when truncated.
+const looksLikeVersion = /(?<!\p{Nd})\p{Nd}{4,}\./u;
 /** Version output is one short line; anything far larger is not trusted. */
 const maxOutputLength = 4096;
 const strictVersion =
