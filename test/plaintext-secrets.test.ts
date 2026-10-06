@@ -1,0 +1,267 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  assessPlaintextSecrets,
+  nodeSecretFileReader,
+  type PlaintextSecretsResult,
+  type SecretFileReader,
+} from "../src/checks/plaintext-secrets.js";
+
+const home = path.join(path.sep, "home", "chris");
+const stateDir = path.join(home, ".openclaw");
+const configPath = path.join(stateDir, "openclaw.json");
+const stateEnv = path.join(stateDir, ".env");
+const gatewayEnv = path.join(home, ".config", "openclaw", "gateway.env");
+const mainModels = path.join(stateDir, "agents", "main", "agent", "models.json");
+const workModels = path.join(stateDir, "agents", "work", "agent", "models.json");
+const locations = { stateDir, configPath, homeDir: home };
+
+// Distinctive values so any leaked fragment is detectable.
+const SECRET_A = "zq9XvB7pLm2Wk4Rt";
+const SECRET_B = "Hy6TnQ3sDf8Jc1Vb";
+const SECRET_C = "Wp4Ks9Ge2Ux7Nm5A";
+const SECRET_D = "Rb8Ct1Lz6Mv3Qj0E";
+const SECRETS = [SECRET_A, SECRET_B, SECRET_C, SECRET_D];
+
+function fakeReader(
+  files: Record<string, string | "UNREADABLE">,
+  directories: Record<string, string[]> = {},
+): SecretFileReader {
+  return {
+    readText(file) {
+      const content = files[file];
+      if (content === undefined) return { status: "missing" };
+      if (content === "UNREADABLE") return { status: "unreadable" };
+      return { status: "ok", text: content };
+    },
+    listDirectories(dir) {
+      return directories[dir] ?? [];
+    },
+  };
+}
+
+/** No value, and no 5-character window of any value, may appear in a result. */
+function assertNoLeak(result: PlaintextSecretsResult, secrets = SECRETS) {
+  const serialized = JSON.stringify(result);
+  for (const secret of secrets) {
+    for (let i = 0; i + 5 <= secret.length; i += 1) {
+      const fragment = secret.slice(i, i + 5);
+      assert.ok(!serialized.includes(fragment), `result leaks fragment ${fragment}`);
+    }
+  }
+}
+
+function keys(result: PlaintextSecretsResult) {
+  return result.findings.map((finding) => `${finding.kind} ${finding.file}${finding.line ? `:${finding.line}` : ""} ${finding.key}`);
+}
+
+test("nothing to scan passes with no findings", () => {
+  const result = assessPlaintextSecrets(locations, fakeReader({}));
+  assert.equal(result.grade, "pass");
+  assert.deepEqual(result.findings, []);
+  assert.deepEqual(result.unreadable, []);
+});
+
+test("secret-like .env assignments are reported by file, line, and key only", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [stateEnv]: [
+        "# comment",
+        `OPENAI_API_KEY=${SECRET_A}`,
+        "LOG_LEVEL=debug",
+        `export DISCORD_BOT_TOKEN="${SECRET_B}"`,
+        "EMPTY_API_KEY=",
+        "QUOTED_EMPTY_TOKEN=''",
+        `GATEWAY_PASSWORD = '${SECRET_C}'`,
+        `not an assignment ${SECRET_D}`,
+      ].join("\r\n"),
+      [gatewayEnv]: `ANTHROPIC_API_KEY=${SECRET_D}\n`,
+    }),
+  );
+  assert.equal(result.grade, "warning");
+  assert.deepEqual(keys(result), [
+    `plaintext ${stateEnv}:2 OPENAI_API_KEY`,
+    `plaintext ${stateEnv}:4 DISCORD_BOT_TOKEN`,
+    `plaintext ${stateEnv}:7 GATEWAY_PASSWORD`,
+    `plaintext ${gatewayEnv}:1 ANTHROPIC_API_KEY`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("a .env next to a non-default config path is scanned once", () => {
+  const otherConfig = path.join(home, "cfg", "openclaw.json");
+  const otherEnv = path.join(home, "cfg", ".env");
+  const result = assessPlaintextSecrets(
+    { ...locations, configPath: otherConfig },
+    fakeReader({ [otherEnv]: `SLACK_TOKEN=${SECRET_A}`, [stateEnv]: `SLACK_TOKEN=${SECRET_A}` }),
+  );
+  assert.deepEqual(keys(result), [
+    `plaintext ${stateEnv}:1 SLACK_TOKEN`,
+    `plaintext ${otherEnv}:1 SLACK_TOKEN`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("literal config secrets are reported by JSON path, and references are not", () => {
+  const config = `{
+    // JSON5 comments and trailing commas are accepted.
+    gateway: {
+      auth: { mode: "token", token: "${SECRET_A}", password: "\${OPENCLAW_GATEWAY_PASSWORD}" },
+    },
+    models: {
+      providers: {
+        openai: { apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" } },
+        local: { apiKey: "ollama-local", baseUrl: "http://127.0.0.1:11434" },
+        custom: { apiKey: "${SECRET_B}", headers: { Authorization: "Bearer \${CUSTOM_TOKEN}" } },
+      },
+    },
+    channels: { discord: { token: "${SECRET_C}", tokenFile: "/run/secrets/discord" } },
+    agents: { defaults: { maxTokens: 4096, model: "gpt" } },
+  }`;
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.equal(result.grade, "warning");
+  assert.deepEqual(keys(result), [
+    `plaintext ${configPath} gateway.auth.token`,
+    `plaintext ${configPath} models.providers.custom.apiKey`,
+    `plaintext ${configPath} channels.discord.token`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("config env vars with secret-like names are reported", () => {
+  const config = JSON.stringify({
+    env: {
+      vars: { OPENAI_API_KEY: SECRET_A, HTTP_PROXY: "http://proxy:3128" },
+      GITHUB_TOKEN: SECRET_B,
+      shellEnv: { enabled: true },
+    },
+  });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [
+    `plaintext ${configPath} env.vars.OPENAI_API_KEY`,
+    `plaintext ${configPath} env.GITHUB_TOKEN`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("non-empty ${VAR:-fallback} defaults are plaintext secrets (issue #2c)", () => {
+  const config = JSON.stringify({
+    gateway: {
+      auth: { mode: "token", token: `\${OPENCLAW_GATEWAY_TOKEN:-${SECRET_A}}` },
+      port: "${OPENCLAW_GATEWAY_PORT:-18789}",
+    },
+    tools: { search: { endpoint: `https://api.example/?key=\${SEARCH_API_KEY:-${SECRET_B}}` } },
+    channels: { slack: { botToken: "${SLACK_BOT_TOKEN:-}" } },
+  });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [
+    `fallback ${configPath} gateway.auth.token`,
+    `fallback ${configPath} tools.search.endpoint`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("an escaped $${VAR} is literal text, not a reference", () => {
+  const config = JSON.stringify({ gateway: { auth: { password: "$${NOT_A_REF}" } } });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.deepEqual(keys(result), [`plaintext ${configPath} gateway.auth.password`]);
+});
+
+test("models.json provider keys and sensitive headers are reported per agent", () => {
+  const models = (secret: string) =>
+    JSON.stringify({
+      providers: {
+        openai: { apiKey: secret, headers: { "X-Title": "nova", "x-api-key": SECRET_D } },
+        bedrock: { apiKey: "AWS_PROFILE" },
+        managed: { apiKey: "secretref-managed", headers: { Authorization: "secretref-env:TOKEN" } },
+        oauth: { apiKey: "oauth:openai-codex" },
+      },
+    });
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader(
+      { [mainModels]: models(SECRET_A), [workModels]: models(SECRET_B) },
+      { [path.join(stateDir, "agents")]: ["main", "work"] },
+    ),
+  );
+  assert.deepEqual(keys(result), [
+    `plaintext ${mainModels} providers.openai.apiKey`,
+    `plaintext ${mainModels} providers.openai.headers.x-api-key`,
+    `plaintext ${workModels} providers.openai.apiKey`,
+    `plaintext ${workModels} providers.openai.headers.x-api-key`,
+  ]);
+  assertNoLeak(result);
+});
+
+test("the main agent's models.json is scanned even if the agents directory is not listed", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({ [mainModels]: JSON.stringify({ providers: { x: { apiKey: SECRET_A } } }) }),
+  );
+  assert.deepEqual(keys(result), [`plaintext ${mainModels} providers.x.apiKey`]);
+});
+
+test("unreadable or unparseable files are unknown and never echo their contents", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({
+      [configPath]: `{ gateway: { auth: { token: "${SECRET_A}" `,
+      [stateEnv]: "UNREADABLE",
+      [mainModels]: `{"providers": {"x": {"apiKey": "${SECRET_B}"}`,
+    }),
+  );
+  assert.equal(result.grade, "unknown");
+  assert.deepEqual(result.unreadable, [stateEnv, configPath, mainModels]);
+  assert.deepEqual(result.findings, []);
+  assertNoLeak(result);
+});
+
+test("findings outrank unreadable files, which are still listed", () => {
+  const result = assessPlaintextSecrets(
+    locations,
+    fakeReader({ [stateEnv]: `OPENAI_API_KEY=${SECRET_A}`, [configPath]: "UNREADABLE" }),
+  );
+  assert.equal(result.grade, "warning");
+  assert.deepEqual(result.unreadable, [configPath]);
+  assert.match(result.summary, /1 plaintext secret/);
+  assert.match(result.summary, /1 file could not be read/);
+  assertNoLeak(result);
+});
+
+test("reported keys are sanitized and bounded", () => {
+  const config = JSON.stringify({ channels: { ["evil\u001b[2J\nname"]: { token: SECRET_A } } });
+  const result = assessPlaintextSecrets(locations, fakeReader({ [configPath]: config }));
+  assert.equal(result.findings.length, 1);
+  assert.ok(!/[\u0000-\u001f\u007f]/.test(result.findings[0]!.key));
+  assert.ok(result.findings[0]!.key.length <= 200);
+  assertNoLeak(result);
+});
+
+test("the real file reader is read-only and reports missing, ok, and oversized files", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "nova-guard-secrets-"));
+  try {
+    const agentDir = path.join(dir, "agents", "main", "agent");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(path.join(dir, ".env"), `OPENAI_API_KEY=${SECRET_A}\n`);
+    writeFileSync(path.join(dir, "big.json"), "x".repeat(2 * 1024 * 1024));
+    assert.deepEqual(nodeSecretFileReader.readText(path.join(dir, "absent")), { status: "missing" });
+    assert.equal(nodeSecretFileReader.readText(path.join(dir, ".env")).status, "ok");
+    assert.deepEqual(nodeSecretFileReader.readText(path.join(dir, "big.json")), { status: "unreadable" });
+    assert.deepEqual(nodeSecretFileReader.listDirectories(path.join(dir, "agents")), ["main"]);
+    assert.deepEqual(nodeSecretFileReader.listDirectories(path.join(dir, "nope")), []);
+
+    const result = assessPlaintextSecrets(
+      { stateDir: dir, configPath: path.join(dir, "openclaw.json"), homeDir: dir },
+      nodeSecretFileReader,
+    );
+    assert.deepEqual(keys(result), [`plaintext ${path.join(dir, ".env")}:1 OPENAI_API_KEY`]);
+    assertNoLeak(result);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
