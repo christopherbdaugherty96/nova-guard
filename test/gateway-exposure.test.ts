@@ -292,3 +292,15 @@ test("nonempty environment fallback is evidence of configured auth", () => {
   });
   assert.equal(result.grade, "warning");
 });
+
+test("a custom bind host OpenClaw cannot bind (not IPv4) is unknown, never pass", () => {
+  // OpenClaw's resolveGatewayBindHost accepts only an IPv4 custom host; startup
+  // rejects anything else, so the configured exposure cannot be established.
+  for (const customBindHost of ["::1", "localhost", "", undefined]) {
+    const result = assessGatewayExposure({
+      gateway: { bind: "custom", ...(customBindHost === undefined ? {} : { customBindHost }), auth: { mode: "none" } },
+    });
+    assert.equal(result.grade, "unknown", String(customBindHost));
+  }
+  assert.equal(assessGatewayExposure({ gateway: { bind: "custom", customBindHost: "127.0.0.1" } }).grade, "pass");
+});
