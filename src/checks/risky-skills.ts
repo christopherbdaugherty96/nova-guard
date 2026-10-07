@@ -42,13 +42,19 @@ export type SkillConfigInput =
 export interface RiskySkillFinding {
   ruleId: string;
   severity: SkillRuleSeverity;
-  /** The skill root it was discovered under (managed, workspace, extra, ...). */
+  /** The skill root it was discovered under. */
   root: string;
+  rootKind: SkillRootKind;
   /** The skill directory as discovered (a location, never the skill's name field). */
   skillDir: string;
   file: string;
   line: number;
+  /** On a "<rule>-truncated" finding: further matches not listed. */
+  omitted?: number;
 }
+
+/** Which of OpenClaw's skill roots a skill was found in. */
+export type SkillRootKind = "managed" | "personal" | "workspace" | "workspace-agents" | "extra" | "workshop";
 
 export type SkillUnknownReason =
   | "unreadable"
@@ -156,6 +162,7 @@ type SymlinkPolicy = "any" | "contained" | "contained-or-allowed";
 
 interface SkillRoot {
   dir: string;
+  kind: SkillRootKind;
   symlinks: SymlinkPolicy;
   /** Workshop roots hold skills; the root itself is never one. */
   container?: boolean;
@@ -319,18 +326,18 @@ export function assessRiskySkills(
   const roots: SkillRoot[] = [];
   for (const dir of stringList(load.extraDirs)) {
     const resolved = userPath(dir);
-    if (resolved) roots.push({ dir: resolved, symlinks: "contained-or-allowed" });
+    if (resolved) roots.push({ dir: resolved, kind: "extra", symlinks: "contained-or-allowed" });
   }
   for (const agentDir of agentDirs) {
-    roots.push({ dir: path.join(agentDir, "workshop-skills"), symlinks: "contained", container: true });
+    roots.push({ dir: path.join(agentDir, "workshop-skills"), kind: "workshop", symlinks: "contained", container: true });
   }
-  roots.push({ dir: path.join(locations.stateDir, "skills"), symlinks: "any" });
+  roots.push({ dir: path.join(locations.stateDir, "skills"), kind: "managed", symlinks: "any" });
   // OpenClaw's personal root uses the OS home; both homes are scanned.
-  roots.push({ dir: path.join(locations.osHomeDir ?? locations.homeDir, ".agents", "skills"), symlinks: "any" });
-  roots.push({ dir: path.join(locations.homeDir, ".agents", "skills"), symlinks: "any" });
+  roots.push({ dir: path.join(locations.osHomeDir ?? locations.homeDir, ".agents", "skills"), kind: "personal", symlinks: "any" });
+  roots.push({ dir: path.join(locations.homeDir, ".agents", "skills"), kind: "personal", symlinks: "any" });
   for (const workspace of workspaces) {
-    roots.push({ dir: path.join(workspace, ".agents", "skills"), symlinks: "contained-or-allowed" });
-    roots.push({ dir: path.join(workspace, "skills"), symlinks: "contained-or-allowed" });
+    roots.push({ dir: path.join(workspace, ".agents", "skills"), kind: "workspace-agents", symlinks: "contained-or-allowed" });
+    roots.push({ dir: path.join(workspace, "skills"), kind: "workspace", symlinks: "contained-or-allowed" });
   }
 
   const tryRealpath = (file: string): string | undefined => {
@@ -354,7 +361,7 @@ export function assessRiskySkills(
     }
   };
 
-  const skillsByRealPath = new Map<string, { dir: string; root: string }>();
+  const skillsByRealPath = new Map<string, { dir: string; root: string; kind: SkillRootKind }>();
   // Roots are walked once per real directory and policy, so many links to
   // one tree (for example, agents' workshop roots) cost one walk.
   const seenRoots = new Set<string>();
@@ -388,7 +395,7 @@ export function assessRiskySkills(
         break;
       }
       if (!(root.container && depth === 0) && hasSkillFile(real)) {
-        if (!skillsByRealPath.has(real)) skillsByRealPath.set(real, { dir, root: rootDir });
+        if (!skillsByRealPath.has(real)) skillsByRealPath.set(real, { dir, root: rootDir, kind: root.kind });
         continue;
       }
       if (depth >= maxDiscoveryDepth) continue;
@@ -450,12 +457,20 @@ export function assessRiskySkills(
     }
   }
 
-  const report = (root: string, skillDir: string, file: string, hits: ReturnType<typeof scanSource>) => {
+  const report = (
+    root: string,
+    rootKind: SkillRootKind,
+    skillDir: string,
+    file: string,
+    hits: ReturnType<typeof scanSource>,
+  ) => {
     for (const hit of hits) {
       findings.push({
         ruleId: hit.ruleId,
         severity: hit.severity,
         root: sanitize(root),
+        rootKind,
+        ...(hit.omitted === undefined ? {} : { omitted: hit.omitted }),
         skillDir: sanitize(skillDir),
         file: sanitize(file),
         line: hit.line,
@@ -495,7 +510,7 @@ export function assessRiskySkills(
   };
 
   let totalScanEntries = 0;
-  for (const [skillReal, { dir: skillDir, root: skillRoot }] of skillsByRealPath) {
+  for (const [skillReal, { dir: skillDir, root: skillRoot, kind: skillRootKind }] of skillsByRealPath) {
     if (timeUp()) break;
     // SKILL.md: OpenClaw applies both its skill-text and source rules.
     const skillFile = path.join(skillDir, "SKILL.md");
@@ -503,7 +518,7 @@ export function assessRiskySkills(
       ...scanSkillContent(text),
       ...scanSource(text),
     ]);
-    if (skillHits) report(skillRoot, skillDir, skillFile, skillHits);
+    if (skillHits) report(skillRoot, skillRootKind, skillDir, skillFile, skillHits);
 
     // Script files, walked like OpenClaw's scanner: no symlinks, no dot
     // entries, no node_modules.
@@ -543,7 +558,7 @@ export function assessRiskySkills(
     for (const { file, real } of files.slice(0, maxScriptFiles)) {
       if (timeUp()) break;
       const hits = scanOnce(file, real, maxScriptFileBytes, scanSource);
-      if (hits) report(skillRoot, skillDir, file, hits);
+      if (hits) report(skillRoot, skillRootKind, skillDir, file, hits);
     }
   }
 

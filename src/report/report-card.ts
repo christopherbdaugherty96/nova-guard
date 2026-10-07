@@ -2,7 +2,12 @@ import path from "node:path";
 
 import type { GatewayExposureResult } from "../checks/gateway-exposure.js";
 import type { PlaintextSecretsResult, SecretFinding } from "../checks/plaintext-secrets.js";
-import type { RiskySkillFinding, RiskySkillsResult, SkillUnknownReason } from "../checks/risky-skills.js";
+import type {
+  RiskySkillFinding,
+  RiskySkillsResult,
+  SkillRootKind,
+  SkillUnknownReason,
+} from "../checks/risky-skills.js";
 import type { VersionAdvisoryResult } from "../checks/version-advisories.js";
 
 /**
@@ -11,10 +16,12 @@ import type { VersionAdvisoryResult } from "../checks/version-advisories.js";
  * its input, so the same results always render the same page.
  *
  * Redaction: values never reach the checks' results, and this layer prints
- * even less of them. The home directory becomes "~", agent ids in state
- * paths become "*", configured gateway bind/auth values are never printed
- * (only the checks' fixed summaries), and risky skills are shown by root,
- * file kind, rule, and line, never by skill directory or file name.
+ * even less of them, because report cards are meant to be shared. Home
+ * directories print as "~", a state directory outside home as "<state>",
+ * agent ids in state paths as "*"; configured gateway bind/auth values are
+ * never printed (only the checks' fixed summaries); risky skills print by
+ * the kind of root they were found in, a per-card number, file kind, rule,
+ * and line, never by any configured path, skill name, or file name.
  */
 
 export const reportCardWidth = 80;
@@ -26,7 +33,10 @@ export const waitlistUrl =
 type Grade = "pass" | "warning" | "critical" | "unknown";
 
 export interface ReportCardInput {
+  /** OpenClaw's effective home; printed as "~". */
   homeDir: string;
+  /** The OS home, when it differs; also printed as "~". */
+  osHomeDir?: string;
   stateDir: string;
   toolVersion: string;
   advisoryDataDate: string;
@@ -42,13 +52,53 @@ const gradeRank: Record<Grade, number> = { pass: 0, unknown: 1, warning: 2, crit
 interface Finding {
   severity: "critical" | "warning";
   label: string;
-  /** A second line: `before`, a path shortened to fit, then `after`. */
-  location?: { before: string; path: string; after: string };
+  /** A second line: `before`, a path shortened to fit, `suffix`, then `detail`. */
+  location?: { before: string; path: string; suffix: string; detail: string };
   fix: string;
 }
 
+const findingIndent = " ".repeat(15);
+const fixIndent = " ".repeat(10);
+
 function sanitize(text: string): string {
   return text.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "");
+}
+
+/** Terminal columns: East Asian wide characters and emoji take two, marks none. */
+function charColumns(char: string): number {
+  if (/\p{Mn}|\p{Me}|‍/u.test(char)) return 0;
+  return /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3FFFD}]|\p{Extended_Pictographic}/u.test(
+    char,
+  )
+    ? 2
+    : 1;
+}
+
+function columns(text: string): number {
+  let width = 0;
+  for (const char of text) width += charColumns(char);
+  return width;
+}
+
+/** The longest tail of `text` that fits in `width` columns. */
+function tail(text: string, width: number): string {
+  const chars = [...text];
+  let used = 0;
+  let start = chars.length;
+  while (start > 0) {
+    const next = charColumns(chars[start - 1] as string);
+    if (used + next > width) break;
+    used += next;
+    start -= 1;
+  }
+  return chars.slice(start).join("");
+}
+
+/** Shortens a line to the page width, keeping its end (where file names are). */
+function fit(line: string): string {
+  if (columns(line) <= reportCardWidth) return line;
+  const indent = line.match(/^\s*/)?.[0] ?? "";
+  return `${indent}…${tail(line.slice(indent.length), reportCardWidth - indent.length - 1)}`;
 }
 
 /** Word-wraps text to the page width, indenting continuation lines. */
@@ -58,7 +108,7 @@ function wrap(text: string, indent: string, firstIndent = indent): string[] {
   let lineHasWord = false;
   for (const word of text.split(/\s+/).filter(Boolean)) {
     const candidate = lineHasWord ? `${line} ${word}` : `${line}${word}`;
-    if ([...candidate].length <= reportCardWidth || !lineHasWord) {
+    if (columns(candidate) <= reportCardWidth || !lineHasWord) {
       line = candidate;
       lineHasWord = true;
     } else {
@@ -71,33 +121,58 @@ function wrap(text: string, indent: string, firstIndent = indent): string[] {
   return lines.map((entry) => fit(entry));
 }
 
-/** Shortens a line to the page width, keeping its end (where file names are). */
-function fit(line: string): string {
-  const chars = [...line];
-  if (chars.length <= reportCardWidth) return line;
-  const indent = line.match(/^\s*/)?.[0] ?? "";
-  const keep = reportCardWidth - indent.length - 1;
-  return `${indent}…${chars.slice(chars.length - keep).join("")}`;
+/**
+ * The location line. The path is shortened from the left so its suffix stays
+ * whole; if the detail does not leave the path room, it moves to its own line.
+ */
+function locationLines(location: NonNullable<Finding["location"]>): string[] {
+  const minimumPath = 24;
+  const head = `${findingIndent}${location.before}`;
+  const withPath = (after: string): string => {
+    const room = reportCardWidth - columns(head) - columns(after);
+    if (columns(location.path) <= room) return `${head}${location.path}${after}`;
+    return fit(`${head}…${tail(location.path, Math.max(room - 1, 0))}${after}`);
+  };
+  const oneLine = `${location.suffix}${location.detail}`;
+  if (
+    columns(`${head}${location.path}${oneLine}`) <= reportCardWidth ||
+    reportCardWidth - columns(head) - columns(oneLine) >= minimumPath
+  ) {
+    return [withPath(oneLine)];
+  }
+  const detail = location.detail.replace(/^,\s*/, "");
+  return [withPath(location.suffix), fit(`${findingIndent}${detail}`)];
+}
+
+function isInside(base: string, candidate: string): boolean {
+  const relative = path.relative(base, candidate);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 export function renderReportCard(input: ReportCardInput): string {
-  const home = path.resolve(input.homeDir);
-  const agentsDir = path.join(path.resolve(input.stateDir), "agents");
+  const homes = [input.homeDir, input.osHomeDir]
+    .filter((dir): dir is string => typeof dir === "string")
+    .map((dir) => path.resolve(dir));
+  const stateDir = path.resolve(input.stateDir);
+  const agentsDir = path.join(stateDir, "agents");
 
   const displayPath = (raw: string): string => {
     let file = path.resolve(raw);
     // Agent ids are user-chosen names: <stateDir>/agents/<id>/... -> agents/*/...
-    const relativeToAgents = path.relative(agentsDir, file);
-    if (relativeToAgents && !relativeToAgents.startsWith("..") && !path.isAbsolute(relativeToAgents)) {
-      const [, ...rest] = relativeToAgents.split(path.sep);
+    if (file !== agentsDir && isInside(agentsDir, file)) {
+      const [, ...rest] = path.relative(agentsDir, file).split(path.sep);
       file = path.join(agentsDir, "*", ...rest);
     }
-    const relativeToHome = path.relative(home, file);
-    if (relativeToHome === "") file = "~";
-    else if (!relativeToHome.startsWith("..") && !path.isAbsolute(relativeToHome)) {
-      file = ["~", relativeToHome].join(path.sep);
-    }
-    return sanitize(file);
+    const shorten = (base: string, label: string): string | undefined => {
+      if (!isInside(base, file)) return undefined;
+      const relative = path.relative(base, file);
+      return relative === "" ? label : [label, relative].join(path.sep);
+    };
+    const shortened =
+      homes.map((home) => shorten(home, "~")).find((value) => value !== undefined) ??
+      shorten(stateDir, "<state>") ??
+      file;
+    return sanitize(shortened);
   };
 
   const findings: Finding[] = [];
@@ -108,7 +183,7 @@ export function renderReportCard(input: ReportCardInput): string {
   if (!gateway) unchecked.push("Gateway exposure: not checked.");
   else if (gateway.grade === "unknown") unchecked.push(`Gateway exposure: ${sanitize(gateway.summary)}`);
   else if (gateway.grade !== "pass") {
-    findings.push({ severity: gateway.grade, label: sanitize(gateway.summary), fix: gatewayFix(gateway) });
+    findings.push({ severity: gateway.grade, label: sanitize(gateway.summary), fix: gatewayFix(gateway.summary) });
   }
 
   const version = input.version;
@@ -116,12 +191,14 @@ export function renderReportCard(input: ReportCardInput): string {
   else if (version.grade === "unknown") unchecked.push(`Version: ${sanitize(version.summary)}`);
   else if (version.grade !== "pass") {
     const ids = version.advisories.map(sanitize);
-    const listed = ids.slice(0, 3).join(", ");
     const more = ids.length > 3 ? ` and ${ids.length - 3} more` : "";
     findings.push({
       severity: version.grade,
       label: `Version: ${sanitize(version.summary)}`,
-      fix: `Upgrade OpenClaw to the latest release (affected by ${listed}${more}).`,
+      fix:
+        ids.length === 0
+          ? "Upgrade OpenClaw to the latest release."
+          : `Upgrade OpenClaw to the latest release (affected by ${ids.slice(0, 3).join(", ")}${more}).`,
     });
   }
 
@@ -135,13 +212,21 @@ export function renderReportCard(input: ReportCardInput): string {
         location: {
           before: "in ",
           path: displayPath(finding.file),
-          after: `${finding.line === undefined ? "" : `:${finding.line}`}, key ${sanitize(finding.key)}`,
+          suffix: finding.line === undefined ? "" : `:${finding.line}`,
+          detail: `, key ${sanitize(finding.key)}`,
         },
         fix: secretFix(finding),
       });
     }
-    for (const file of secrets.unreadable) unchecked.push(`Plaintext secrets: could not read ${displayPath(file)}`);
-    if (secrets.grade === "unknown" && secrets.unreadable.length === 0) {
+    // One entry per check, so no check's unknowns can crowd out another's.
+    const unreadable = secrets.unreadable;
+    if (unreadable.length === 1) {
+      unchecked.push(`Plaintext secrets: could not read ${displayPath(unreadable[0] as string)}`);
+    } else if (unreadable.length > 1) {
+      unchecked.push(
+        `Plaintext secrets: could not read ${unreadable.length} files, including ${displayPath(unreadable[0] as string)}`,
+      );
+    } else if (secrets.grade === "unknown") {
       unchecked.push(`Plaintext secrets: ${sanitize(secrets.summary)}`);
     }
   }
@@ -149,15 +234,17 @@ export function renderReportCard(input: ReportCardInput): string {
   const skills = input.skills;
   if (!skills) unchecked.push("Risky skills: not checked.");
   else {
-    findings.push(...skillFindings(skills.findings, displayPath));
+    findings.push(...skillFindings(skills.findings));
     if (skills.unknown.length > 0) {
       const counts = new Map<SkillUnknownReason, number>();
       for (const entry of skills.unknown) counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
       const parts = [...counts]
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
         .map(([reason, count]) => `${count} ${reason.replaceAll("-", " ")}`);
       const total = skills.unknown.length;
       unchecked.push(`Risky skills: ${total} location${total === 1 ? "" : "s"} (${parts.join(", ")})`);
+    } else if (skills.grade === "unknown") {
+      unchecked.push(`Risky skills: ${sanitize(skills.summary)}`);
     }
   }
 
@@ -187,36 +274,30 @@ export function renderReportCard(input: ReportCardInput): string {
     ),
     "",
     "Checks",
-    ...checkGrades.map(([name, grade]) =>
-      `  ${name.padEnd(18)} ${grade ? grade.toUpperCase() : "UNKNOWN  not checked"}`.trimEnd(),
-    ),
+    ...checkGrades.map(([name, grade]) => `  ${name.padEnd(18)} ${grade ? grade.toUpperCase() : "UNKNOWN  not checked"}`),
     "  Spend              not checked (no documented local source yet)",
     "",
   ];
 
   const uncheckedLines = ["Could not be checked"];
-  const maxUnchecked = 8;
   if (unchecked.length === 0) uncheckedLines.push("  Nothing.");
-  for (const entry of unchecked.slice(0, maxUnchecked)) uncheckedLines.push(...wrap(entry, "    ", "  - "));
-  if (unchecked.length > maxUnchecked) uncheckedLines.push(`  - ${unchecked.length - maxUnchecked} more not shown.`);
+  for (const entry of unchecked) uncheckedLines.push(...wrap(entry, "    ", "  - "));
 
-  const tail = ["", "Get notified when the nova-guard proxy ships:", waitlistUrl];
+  const tailLines = ["", "Get notified when the nova-guard proxy ships:", waitlistUrl];
 
   // Findings get whatever room the page has left.
-  const budget = reportCardPageLines - head.length - uncheckedLines.length - tail.length - 3;
+  const budget = reportCardPageLines - head.length - uncheckedLines.length - tailLines.length - 3;
   const findingLines: string[] = ["Findings (most severe first)"];
   if (ordered.length === 0) findingLines.push("  None.");
   let shown = 0;
   for (const [index, finding] of ordered.entries()) {
     const prefix = `  ${index + 1}. ${finding.severity.toUpperCase().padEnd(8)}  `;
-    const location = finding.location;
     const block = [
-      ...wrap(finding.label, "               ", prefix),
-      ...(location ? [withPath(`               ${location.before}`, location.path, location.after)] : []),
-      ...wrap(finding.fix, "          ", "     Fix: "),
+      ...wrap(finding.label, findingIndent, prefix),
+      ...(finding.location ? locationLines(finding.location) : []),
+      ...wrap(finding.fix, fixIndent, "     Fix: "),
     ];
-    const remaining = ordered.length - index - 1;
-    const reserve = remaining > 0 ? 1 : 0;
+    const reserve = index < ordered.length - 1 ? 1 : 0;
     if (findingLines.length - 1 + block.length + reserve > budget) break;
     findingLines.push(...block);
     shown += 1;
@@ -226,37 +307,69 @@ export function renderReportCard(input: ReportCardInput): string {
     findingLines.push(`  ${rest} more finding${rest === 1 ? "" : "s"} not shown; fix the ones above first.`);
   }
 
-  return [...head, ...findingLines, "", ...uncheckedLines, ...tail].join("\n");
+  return [...head, ...findingLines, "", ...uncheckedLines, ...tailLines].join("\n");
 }
 
-/** One line: the path is shortened from the left so the text after it stays whole. */
-function withPath(before: string, file: string, after: string): string {
-  const line = `${before}${file}${after}`;
-  if ([...line].length <= reportCardWidth) return line;
-  const room = reportCardWidth - [...before].length - [...after].length - 1;
-  const chars = [...file];
-  return room > 0 ? `${before}…${chars.slice(chars.length - room).join("")}${after}` : fit(line);
-}
+// Every summary the gateway check can produce at warning or critical, so the
+// fix always matches the exposure (src/checks/gateway-exposure.ts).
+const gatewayFixes: [string, string][] = [
+  [
+    "Gateway is configured for non-loopback access without authentication.",
+    "Turn on gateway auth (token or password), or bind the gateway to loopback.",
+  ],
+  [
+    "Gateway is authenticated but exposed beyond loopback.",
+    "Keep gateway auth on, and bind the gateway to loopback unless you need remote access.",
+  ],
+  [
+    "Public Tailscale Funnel exposure has a non-password auth mode.",
+    "Use password auth with Tailscale Funnel, or switch to Tailscale Serve.",
+  ],
+  [
+    "Public internet exposure via Tailscale Funnel; password is not verifiable.",
+    "Funnel puts the gateway on the public internet: switch to Tailscale Serve unless you need that, and make sure password auth is set.",
+  ],
+  [
+    "Public internet exposure via Tailscale Funnel.",
+    "Funnel puts the gateway on the public internet: switch to Tailscale Serve unless you need that, and keep password auth on.",
+  ],
+  [
+    "Gateway is reachable from the tailnet via Tailscale Serve.",
+    "Anyone on your tailnet can reach the gateway: keep auth on and limit who can join the tailnet.",
+  ],
+];
 
-function gatewayFix(result: GatewayExposureResult): string {
-  if (result.summary.startsWith("Public Tailscale Funnel")) {
-    return "Use password auth with Tailscale Funnel, or switch to Tailscale Serve.";
-  }
-  if (result.grade === "critical") {
-    return "Turn on gateway auth (token or password), or bind the gateway to loopback.";
-  }
-  return "Keep gateway auth on, and bind to loopback unless you need remote access.";
+function gatewayFix(summary: string): string {
+  // Combined results read "<primary> Also: <secondary>"; fix both.
+  const fixes = summary
+    .split(" Also: ")
+    .map((part) => gatewayFixes.find(([known]) => part.trim() === known)?.[1])
+    .filter((fix): fix is string => fix !== undefined);
+  const unique = [...new Set(fixes)];
+  return unique.length > 0
+    ? unique.join(" Also: ")
+    : "Review the gateway's bind and auth settings so it is reachable only where you intend.";
 }
 
 function secretFix(finding: SecretFinding): string {
   if (finding.kind === "fallback") {
     return "Remove the inline default from the ${VAR:-...} reference, then rotate the secret.";
   }
-  if (/\.env$/.test(finding.file)) {
+  // Only .env findings carry a line number.
+  if (finding.line !== undefined) {
     return "Limit this file to your user (chmod 600), or move the secret into a secret store; rotate it if it was shared.";
   }
   return "Replace the value with a ${VAR} reference or SecretRef, then rotate the secret.";
 }
+
+const rootLabels: Record<SkillRootKind, string> = {
+  managed: "the managed skills folder",
+  personal: ["~", ".agents", "skills"].join(path.sep),
+  workspace: "a workspace skills folder",
+  "workspace-agents": "a workspace .agents/skills folder",
+  extra: "a skills.load.extraDirs folder",
+  workshop: "an agent workshop-skills folder",
+};
 
 const skillRuleFixes: Record<string, string> = {
   "dangerous-exec": "Runs shell commands. Review the code, or remove the skill if you do not trust its author.",
@@ -273,30 +386,39 @@ const skillRuleFixes: Record<string, string> = {
   "unsafe-permissions": "Sets world-writable permissions (chmod 777). Use narrower permissions.",
 };
 
-function skillFindings(results: RiskySkillFinding[], displayPath: (raw: string) => string): Finding[] {
-  // One entry per skill, file, and rule; repeated lines are counted.
-  const groups = new Map<string, { finding: RiskySkillFinding; lines: number[] }>();
+function skillFindings(results: RiskySkillFinding[]): Finding[] {
+  // Skills are numbered in the order the check lists them, since their names
+  // and paths are not printed.
+  const skillNumbers = new Map<string, number>();
+  // One entry per skill, file, and rule; repeated and omitted matches are counted.
+  const groups = new Map<string, { finding: RiskySkillFinding; first: number; count: number }>();
   for (const finding of results) {
-    const rule = finding.ruleId.replace(/-truncated$/, "");
+    if (!skillNumbers.has(finding.skillDir)) skillNumbers.set(finding.skillDir, skillNumbers.size + 1);
+    const truncated = finding.ruleId.endsWith("-truncated");
+    const rule = truncated ? finding.ruleId.slice(0, -"-truncated".length) : finding.ruleId;
     const key = `${finding.skillDir}\u0000${finding.file}\u0000${rule}`;
+    const matches = truncated ? (finding.omitted ?? 1) : 1;
     const group = groups.get(key);
-    if (group) group.lines.push(finding.line);
-    else groups.set(key, { finding: { ...finding, ruleId: rule }, lines: [finding.line] });
+    if (group) {
+      group.count += matches;
+      if (!truncated) group.first = Math.min(group.first, finding.line);
+    } else {
+      groups.set(key, { finding: { ...finding, ruleId: rule }, first: finding.line, count: matches });
+    }
   }
-  return [...groups.values()].map(({ finding, lines }) => {
-    // Skill directory and file names are user-chosen: show the root and the
-    // file's kind only.
+  return [...groups.values()].map(({ finding, first, count }) => {
     const base = path.basename(finding.file);
     const kind = base === "SKILL.md" ? "SKILL.md" : `${sanitize(path.extname(base)) || "script"} file`;
-    const first = Math.min(...lines);
-    const more = lines.length > 1 ? ` (+${lines.length - 1} more)` : "";
+    const more = count > 1 ? ` (+${count - 1} more)` : "";
+    const number = skillNumbers.get(finding.skillDir) as number;
     return {
       severity: finding.severity === "critical" ? "critical" : "warning",
       label: `Risky skill (${sanitize(finding.ruleId)})`,
       location: {
-        before: "skill ",
-        path: [displayPath(finding.root), "*"].join(path.sep),
-        after: `: ${kind} line ${first}${more}`,
+        before: `skill ${number} in `,
+        path: rootLabels[finding.rootKind] ?? "a skills folder",
+        suffix: `: ${kind} line ${first}${more}`,
+        detail: "",
       },
       fix: skillRuleFixes[finding.ruleId] ?? "Review this skill before use.",
     } satisfies Finding;

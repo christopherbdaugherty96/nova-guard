@@ -33,9 +33,11 @@ over the check results: an overall grade (the worst check: critical, warning,
 unknown, pass), findings most severe first, each with a plain-language fix, and
 an explicit "Could not be checked" section. It fits one printed page (80
 columns, 66 lines; the waitlist link is printed whole). For sharing, it is
-redacted further than the checks: the home directory prints as `~`, agent ids
-in paths as `*`, risky skills by root, file kind, rule, and line only (never a
-skill or file name), and configured gateway values are never printed. Spend is
+redacted further than the checks: home directories print as `~`, a state
+directory outside home as `<state>`, agent ids in paths as `*`, risky skills by
+the kind of root they were found in, a per-card number, file kind, rule, and
+line only (never a configured path, skill name, or file name), and configured
+gateway values are never printed. Spend is
 shown as not checked until a documented local source exists.
 
 Implementation will land as small reviewed pull requests. Each scanner check
