@@ -104,7 +104,12 @@ function hasLoadableShape(config: unknown): boolean {
     section(agents) &&
     section(skills) &&
     (!isPlainObject(gateway) || (section(gateway.auth) && section(gateway.tailscale))) &&
-    (!isPlainObject(agents) || (list(agents.list) && section(agents.entries) && section(agents.defaults))) &&
+    (!isPlainObject(agents) ||
+      (list(agents.list) &&
+        (!Array.isArray(agents.list) || agents.list.every(isPlainObject)) &&
+        section(agents.entries) &&
+        (!isPlainObject(agents.entries) || Object.values(agents.entries).every(isPlainObject)) &&
+        section(agents.defaults))) &&
     section(load) &&
     (!isPlainObject(load) || (list(load.extraDirs) && list(load.allowSymlinkTargets)))
   );

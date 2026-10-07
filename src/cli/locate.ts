@@ -52,18 +52,27 @@ export function resolveOpenClawLocations(
     : osHomeDir;
 
   // OpenClaw's resolveUserPath: trim, expand a leading ~ to OpenClaw's home, resolve.
-  const userPath = (raw: string): string => path.resolve(raw.trim().replace(/^~(?=$|[\\/])/, () => homeDir));
+  // OpenClaw's resolveUserPath: trim and expand a leading ~ to OpenClaw's home.
+  // A path still relative after that resolves against the gateway's working
+  // directory, which nova-guard cannot know, so it is not trusted (undefined).
+  const userPath = (raw: string): string | undefined => {
+    const expanded = raw.trim().replace(/^~(?=$|[\\/])/, () => homeDir);
+    return path.isAbsolute(expanded) ? path.resolve(expanded) : undefined;
+  };
 
   const stateOverride = env.OPENCLAW_STATE_DIR?.trim();
   const stateDir = stateOverride ? userPath(stateOverride) : path.join(homeDir, ".openclaw");
+  if (!stateDir) return undefined;
   const configOverride = env.OPENCLAW_CONFIG_PATH?.trim();
   const configPath = configOverride ? userPath(configOverride) : path.join(stateDir, "openclaw.json");
+  if (!configPath) return undefined;
 
   let workspaceDir: string | undefined;
   const workspaceOverride = env.OPENCLAW_WORKSPACE_DIR?.trim();
   const profile = env.OPENCLAW_PROFILE?.trim();
   if (workspaceOverride) {
-    workspaceDir = path.resolve(workspaceOverride);
+    // OpenClaw resolves this one without ~ expansion, against its own working directory.
+    workspaceDir = path.isAbsolute(workspaceOverride) ? path.resolve(workspaceOverride) : undefined;
   } else if (stateOverride) {
     workspaceDir = path.join(stateDir, "workspace");
   } else if (profile && profile.toLowerCase() !== "default") {
@@ -75,8 +84,9 @@ export function resolveOpenClawLocations(
   const includeRoots: string[] = [];
   for (const entry of (env.OPENCLAW_INCLUDE_ROOTS ?? "").split(path.delimiter)) {
     if (!entry.trim()) continue;
+    // A relative root is dropped: includes it would allow then stay refused (unknown).
     const resolved = userPath(entry);
-    if (!includeRoots.includes(resolved)) includeRoots.push(resolved);
+    if (resolved && !includeRoots.includes(resolved)) includeRoots.push(resolved);
   }
 
   const defaultStateDir = stateDir === path.join(homeDir, ".openclaw");
