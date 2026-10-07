@@ -62,6 +62,7 @@ export type SkillUnknownReason =
   | "scan-truncated"
   | "discovery-truncated"
   | "relative-path"
+  | "templated-path"
   | "config-unreadable"
   | "time-limit";
 
@@ -207,6 +208,52 @@ function normalizeAgentId(value: unknown): string {
   return agentId || "main";
 }
 
+function agentRoster(agents: Record<string, unknown>): Record<string, unknown>[] {
+  const roster: Record<string, unknown>[] = [];
+  if (Object.hasOwn(agents, "entries") && agents.entries !== undefined) {
+    if (isRecord(agents.entries)) {
+      for (const [id, entry] of Object.entries(agents.entries)) {
+        if (isRecord(entry)) roster.push({ ...entry, id });
+      }
+    }
+  } else if (Array.isArray(agents.list)) {
+    // OpenClaw accepts any non-null object here; one without an id is "main".
+    for (const entry of agents.list) {
+      if (typeof entry === "object" && entry !== null) roster.push(entry as Record<string, unknown>);
+    }
+  } else if (!Object.hasOwn(agents, "list") || agents.list === undefined) {
+    roster.push({ id: "main" });
+  }
+  return roster;
+}
+
+/**
+ * The agent directories OpenClaw resolves for the configured roster
+ * (resolveEffectiveAgentDir at b8324c64): a configured agentDir, else
+ * <stateDir>/agents/<id>/agent. `unverifiable` counts configured directories
+ * that are relative or templated, which OpenClaw resolves in ways not knowable here.
+ */
+export function configuredAgentDirs(
+  locations: Pick<SkillLocations, "stateDir" | "homeDir">,
+  configInput: SkillConfigInput,
+): { dirs: string[]; unverifiable: number } {
+  const config = configInput.status === "ok" && isRecord(configInput.config) ? configInput.config : {};
+  const agents = isRecord(config.agents) ? config.agents : {};
+  const dirs: string[] = [];
+  let unverifiable = 0;
+  for (const entry of agentRoster(agents)) {
+    const configured = typeof entry.agentDir === "string" ? entry.agentDir.trim() : "";
+    if (!configured) {
+      dirs.push(path.join(locations.stateDir, "agents", normalizeAgentId(entry.id), "agent"));
+      continue;
+    }
+    const expanded = configured.replace(/^~(?=$|[\\/])/, () => locations.homeDir);
+    if (configured.includes("${") || !path.isAbsolute(expanded)) unverifiable += 1;
+    else dirs.push(path.resolve(expanded));
+  }
+  return { dirs, unverifiable };
+}
+
 function stringList(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "")
@@ -260,6 +307,12 @@ export function assessRiskySkills(
   const userPath = (raw: string): string | undefined => {
     const trimmed = raw.trim();
     if (trimmed === "") return undefined;
+    // OpenClaw substitutes ${VAR} in config strings before using them
+    // (resolveConfigEnvVars), so the path it uses cannot be known here.
+    if (trimmed.includes("${")) {
+      markUnknown(trimmed, "templated-path");
+      return undefined;
+    }
     const expanded = trimmed.replace(/^~(?=$|[\\/])/, () => locations.homeDir);
     if (!path.isAbsolute(expanded)) {
       markUnknown(trimmed, "relative-path");
@@ -275,21 +328,7 @@ export function assessRiskySkills(
     typeof defaults.workspace === "string" ? userPath(defaults.workspace) : undefined;
   if (defaultsWorkspace) workspaces.push(defaultsWorkspace);
 
-  const roster: Record<string, unknown>[] = [];
-  if (Object.hasOwn(agents, "entries") && agents.entries !== undefined) {
-    if (isRecord(agents.entries)) {
-      for (const [id, entry] of Object.entries(agents.entries)) {
-        if (isRecord(entry)) roster.push({ ...entry, id });
-      }
-    }
-  } else if (Array.isArray(agents.list)) {
-    // OpenClaw accepts any non-null object here; one without an id is "main".
-    for (const entry of agents.list) {
-      if (typeof entry === "object" && entry !== null) roster.push(entry as Record<string, unknown>);
-    }
-  } else if (!Object.hasOwn(agents, "list") || agents.list === undefined) {
-    roster.push({ id: "main" });
-  }
+  const roster = agentRoster(agents);
 
   const agentDirs: string[] = [];
   for (const entry of roster) {

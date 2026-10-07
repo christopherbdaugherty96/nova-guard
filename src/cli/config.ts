@@ -127,9 +127,6 @@ function hasLoadableShape(config: unknown): boolean {
   // checks would otherwise silently skip it.
   const strings = (value: unknown) =>
     value === undefined || (Array.isArray(value) && value.every((item) => typeof item === "string"));
-  // An agent entry: an object whose id, workspace, and agentDir are strings.
-  const agent = (value: unknown) =>
-    isPlainObject(value) && text(value.id) && text(value.workspace) && text(value.agentDir);
   const oneOf = (value: unknown, allowed: readonly string[]) =>
     value === undefined || (typeof value === "string" && allowed.includes(value));
   // A secret: a literal or ${VAR} string, or a SecretRef OpenClaw's schema
@@ -168,14 +165,45 @@ function hasLoadableShape(config: unknown): boolean {
     section(skills) &&
     (!isPlainObject(gateway) || gatewayOk(gateway)) &&
     (!isPlainObject(agents) ||
-      ((agents.list === undefined || (Array.isArray(agents.list) && agents.list.every(agent))) &&
-        section(agents.entries) &&
-        (!isPlainObject(agents.entries) || Object.values(agents.entries).every(agent)) &&
-        section(agents.defaults) &&
-        (!isPlainObject(agents.defaults) || text(agents.defaults.workspace)))) &&
+      (rosterOk(agents) && section(agents.defaults) && (!isPlainObject(agents.defaults) || text(agents.defaults.workspace)))) &&
     section(load) &&
     (!isPlainObject(load) || (strings(load.extraDirs) && strings(load.allowSymlinkTargets)))
   );
+}
+
+/**
+ * The agent roster OpenClaw admits (applyImplicitAgentRosterDefaults, then
+ * AgentsSchema at b8324c64): an absent or empty roster becomes { main: {} };
+ * the retired agents.list is otherwise rejected; entries keys are agent ids,
+ * unique case-insensitively; an entry holds no id, string workspace and
+ * agentDir, and a boolean default; a multi-agent roster needs
+ * ownership "explicit" or exactly one default, never both.
+ */
+function rosterOk(agents: Record<string, unknown>): boolean {
+  const { ownership, entries, list } = agents;
+  if (ownership !== undefined && ownership !== "explicit") return false;
+  const emptyEntries = entries === undefined || (isPlainObject(entries) && Object.keys(entries).length === 0);
+  if (Object.hasOwn(agents, "list")) {
+    // Only an empty list beside an empty roster is dropped; any other is rejected.
+    if (!(Array.isArray(list) && list.length === 0 && emptyEntries && ownership !== "explicit")) return false;
+  }
+  if (emptyEntries) return ownership !== "explicit";
+  if (!isPlainObject(entries)) return false;
+  const ids = new Set<string>();
+  let marked = 0;
+  for (const [key, entry] of Object.entries(entries)) {
+    if (!/^[a-z0-9_][a-z0-9_-]{0,63}$/i.test(key) || ids.has(key.toLowerCase())) return false;
+    ids.add(key.toLowerCase());
+    if (!isPlainObject(entry) || Object.hasOwn(entry, "id")) return false;
+    const { workspace, agentDir } = entry;
+    if (!(workspace === undefined || typeof workspace === "string")) return false;
+    if (!(agentDir === undefined || typeof agentDir === "string")) return false;
+    if (!(entry.default === undefined || typeof entry.default === "boolean")) return false;
+    if (entry.default === true) marked += 1;
+  }
+  if (marked > 1) return false;
+  if (ownership === "explicit") return marked === 0;
+  return ids.size === 1 || marked === 1;
 }
 
 function parse(text: string): unknown {

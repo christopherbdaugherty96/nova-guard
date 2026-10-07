@@ -56,12 +56,9 @@ function authMode(config: OpenClawConfig): GatewayExposureResult["auth"] {
   return "unrecognized";
 }
 
+// Called only for an IPv4 host: 127.0.0.0/8.
 function isLiteralLoopback(host: string): boolean {
-  const ipVersion = isIP(host);
-  if (ipVersion === 4) {
-    return host.split(".")[0] === "127";
-  }
-  return ipVersion === 6 && host === "::1";
+  return host.split(".")[0] === "127";
 }
 
 export function assessGatewayExposure(
@@ -162,6 +159,17 @@ function assessBindExposure(
     const hostValue = config.gateway?.customBindHost;
     const host = typeof hostValue === "string" ? hostValue.trim() : "unknown";
     const describedBind = `custom (${host})`;
+    // OpenClaw binds a custom host only when it is an IPv4 address
+    // (resolveGatewayBindHost at b8324c64); startup rejects anything else, so
+    // the configured exposure cannot be established.
+    if (isIP(host) !== 4) {
+      return {
+        grade: "unknown",
+        bind: describedBind,
+        auth,
+        summary: "Gateway custom bind host is not an IPv4 address OpenClaw can bind, so exposure is unknown.",
+      };
+    }
     if (isLiteralLoopback(host)) {
       return {
         grade: "pass",

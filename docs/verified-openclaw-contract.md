@@ -62,9 +62,14 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   is unknown. Command-line `--bind` flags are never visible to a config scan.
 - The merged config must be an object, and `gateway`, `gateway.auth`,
   `gateway.tailscale`, `agents`, `skills`, and `skills.load` must be objects
-  when present; `agents.list` an array of objects and `agents.entries` values
-  objects, with string `id`, `workspace`, and `agentDir`;
-  `agents.defaults.workspace` a string; `skills.load.extraDirs` and
+  when present; the agent roster must be one OpenClaw admits
+  (`applyImplicitAgentRosterDefaults`, then `AgentsSchema`): an absent or
+  empty roster becomes `{ main: {} }`, the retired `agents.list` is otherwise
+  rejected, `agents.entries` keys match `/^[a-z0-9_][a-z0-9_-]{0,63}$/i` and
+  are unique ignoring case, an entry has no `id`, a string `workspace` and
+  `agentDir`, and a boolean `default`, `agents.ownership` is `explicit` when
+  present, and a multi-agent roster has `ownership: "explicit"` or exactly one
+  `default: true`, never both; `agents.defaults.workspace` a string; `skills.load.extraDirs` and
   `allowSymlinkTargets` arrays of strings; and every gateway field the gateway
   check reads, plus `port`, must be valid: `port` an integer from 1 to 65535; `bind` one of `auto`, `loopback`, `lan`, `tailnet`,
   `custom`; `customBindHost` a string; `trustedProxies` an array of strings;
@@ -73,7 +78,12 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   or a SecretRef with exactly `source` (`env`, `file`, `exec`, `store`),
   `provider` (`/^[a-z][a-z0-9_-]{0,63}$/`), and an `id` valid for its source
   (src/secrets/ref-contract.ts); `auth.trustedProxy.userHeader` a string.
-  Otherwise OpenClaw refuses it and so does the check command. nova-guard
+  Otherwise OpenClaw refuses it and so does the check command. A custom bind
+  host that is not an IPv4 address is unknown: OpenClaw's
+  `resolveGatewayBindHost` binds only IPv4 and startup rejects anything else.
+  OpenClaw substitutes `${VAR}` in config strings before using them
+  (`resolveConfigEnvVars`), so a path setting containing `${` (a skills
+  directory, workspace, or `agentDir`) is unknown, never resolved literally. nova-guard
   does not reimplement OpenClaw's whole config schema: it validates every
   field that can affect path discovery, the four checks, or their grades, and
   a malformed value in one of them is unknown, never pass. An unknown key, an
@@ -203,7 +213,8 @@ Sources:
 - Reports must emit the file path and key name only, never the value.
 
 Verified against OpenClaw `main` at `282f796d` (2026-10-05), whose own
-`openclaw secrets audit` (`src/secrets/audit.ts`) scans the same files. The
+`openclaw secrets audit` (`src/secrets/audit.ts`) scans the same files
+(`listAgentModelsJsonPaths` at b8324c64 for `models.json`). The
 scanner reads, never writes:
 
 - `.env` files: `<stateDir>/.env`, `<configDir>/.env`, and
@@ -242,7 +253,10 @@ scanner reads, never writes:
   (`src/agents/model-auth-markers.ts`), and `providers.*.headers.*` whose name
   is sensitive (`src/secrets/model-provider-header-policy.ts`). If the
   `agents` directory exists but cannot be listed, the result is `unknown`,
-  because other agents' files could not be checked.
+  because other agents' files could not be checked. `models.json` is also read
+  from each configured `agentDir` and from `OPENCLAW_AGENT_DIR` (else
+  `PI_CODING_AGENT_DIR`); one that is relative or templated makes a passing
+  result `unknown`. On the card these directories print as `<agent-dir>`.
 - Secret-like names use OpenClaw's own conservative fragments (`api-key`,
   `apikey`, `token`, `secret`, `password`, `credential`, plus
   `authorization`), plus credential fields from OpenClaw's SecretRef

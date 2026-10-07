@@ -41,6 +41,8 @@ export interface ReportCardInput {
   stateDir: string;
   /** The config file; its directory prints as "<config>" when outside home and state. */
   configPath?: string;
+  /** Agent directories set in config or the environment; each prints as "<agent-dir>". */
+  agentDirs?: readonly string[];
   toolVersion: string;
   advisoryDataDate: string;
   /** A check that did not run is undefined and reported as not checked. */
@@ -168,7 +170,13 @@ export function renderReportCard(input: ReportCardInput): string {
   const stateDir = path.resolve(input.stateDir);
   const agentsDir = path.join(stateDir, "agents");
   const configDir = input.configPath ? path.dirname(path.resolve(input.configPath)) : undefined;
+  // Configured agent directories come first: their names are user-chosen.
+  const agentDirBases = (input.agentDirs ?? [])
+    .filter(usable)
+    .map((dir) => path.resolve(dir))
+    .filter((dir) => dir !== agentsDir && !isInside(agentsDir, dir));
   const bases: [string, string][] = [
+    ...agentDirBases.map((dir): [string, string] => [dir, "<agent-dir>"]),
     ...homes.map((home): [string, string] => [home, "~"]),
     ...(usable(stateDir) ? [[stateDir, "<state>"] as [string, string]] : []),
     ...(usable(configDir) ? [[configDir, "<config>"] as [string, string]] : []),

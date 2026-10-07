@@ -8,7 +8,7 @@ import {
   parseDotEnv,
   type PlaintextSecretsResult,
 } from "../checks/plaintext-secrets.js";
-import { assessRiskySkills, type RiskySkillsResult } from "../checks/risky-skills.js";
+import { assessRiskySkills, configuredAgentDirs } from "../checks/risky-skills.js";
 import { assessOpenClawVersion } from "../checks/version-advisories.js";
 import { advisoryDataDate } from "../data/openclaw-advisories.js";
 import { renderReportCard } from "../report/report-card.js";
@@ -36,6 +36,11 @@ const nodeFiles = {
 };
 
 /** Runs the four checks read-only and renders the report card. */
+function isInside(base: string, file: string): boolean {
+  const relative = path.relative(base, file);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
 export async function runCheck(deps: CheckDependencies): Promise<string> {
   const versionOutput = await deps.probeVersion();
   const version = assessOpenClawVersion(versionOutput);
@@ -100,12 +105,31 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     });
   }
 
+  // OpenClaw's audit also reads models.json in configured agent directories and
+  // in OPENCLAW_AGENT_DIR / PI_CODING_AGENT_DIR (listAgentModelsJsonPaths).
+  const agentDirs = configuredAgentDirs(locations, config);
+  const extraAgentDirs = agentDirs.dirs.filter((dir) => !isInside(path.join(locations.stateDir, "agents"), dir));
+  let unverifiableAgentDirs = agentDirs.unverifiable;
+  const overrideDir = deps.env.OPENCLAW_AGENT_DIR?.trim() || deps.env.PI_CODING_AGENT_DIR?.trim();
+  if (overrideDir) {
+    const expanded = overrideDir.replace(/^~(?=$|[\\/])/, () => locations.homeDir);
+    if (path.isAbsolute(expanded)) extraAgentDirs.push(path.resolve(expanded));
+    else unverifiableAgentDirs += 1;
+  }
   let secrets = assessPlaintextSecrets({
     stateDir: locations.stateDir,
     configPath: locations.configPath,
     homeDir: locations.homeDir,
     includeRoots: locations.includeRoots,
+    agentDirs: extraAgentDirs,
   });
+  if (unverifiableAgentDirs > 0 && secrets.grade === "pass") {
+    secrets = {
+      ...secrets,
+      grade: "unknown",
+      summary: "An agent directory could not be resolved, so plaintext secrets could not be ruled out.",
+    };
+  }
   let skills = assessRiskySkills(
     {
       stateDir: locations.stateDir,
@@ -144,6 +168,7 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     osHomeDir: locations.osHomeDir,
     stateDir: locations.stateDir,
     configPath: locations.configPath,
+    agentDirs: extraAgentDirs,
     toolVersion,
     advisoryDataDate,
     gateway,

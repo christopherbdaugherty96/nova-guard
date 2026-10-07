@@ -36,7 +36,8 @@ an explicit "Could not be checked" section. It fits one printed page (80
 columns, 66 lines; the waitlist link is printed whole). For sharing, it is
 redacted further than the checks: home directories print as `~`, a state
 directory outside home as `<state>`, a config directory outside both as
-`<config>` (a home of `/` is not used), agent ids in paths as `*`, risky skills by
+`<config>` (a home of `/` is not used), a configured agent directory as
+`<agent-dir>`, agent ids in paths as `*`, risky skills by
 the kind of root they were found in, a per-card number, file kind, rule, and
 line only (never a configured path, skill name, or file name), and configured
 gateway values are never printed. Spend is

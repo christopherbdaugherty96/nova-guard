@@ -16,6 +16,12 @@ export interface SecretLocations {
   homeDir: string;
   /** Extra $include roots from OPENCLAW_INCLUDE_ROOTS, already resolved. */
   includeRoots?: readonly string[];
+  /**
+   * Further agent directories whose models.json OpenClaw's audit reads
+   * (listAgentModelsJsonPaths): configured agentDir values and
+   * OPENCLAW_AGENT_DIR / PI_CODING_AGENT_DIR, already resolved.
+   */
+  agentDirs?: readonly string[];
 }
 
 export type SecretFileRead =
@@ -588,6 +594,7 @@ export function assessPlaintextSecrets(
     ...(agents === "unreadable" ? [] : [...agents].sort()).map((agent) =>
       path.join(agentsRoot, agent, "agent", "models.json"),
     ),
+    ...(locations.agentDirs ?? []).map((dir) => path.join(dir, "models.json")),
   ]);
   for (const file of modelsFiles) {
     const found = read(file, (text) => {
