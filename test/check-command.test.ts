@@ -13,6 +13,7 @@ import { npmShimScript, probeOpenClawVersion, windowsTreeKillAvailable, windowsT
 import { toolVersion } from "../src/version.js";
 
 const posixOnly = { skip: process.platform === "win32" };
+const windowsOnly = { skip: process.platform !== "win32" };
 const repo = path.resolve(import.meta.dirname, "..");
 const cliEntry = path.join(repo, "src", "cli.ts");
 // --import takes a module specifier: on Windows a bare C:\ path is not one.
@@ -555,10 +556,13 @@ test("on Windows the probe's process tree is killed by the system taskkill, not 
   assert.equal(windowsTreeKillCommand(4242, { SystemRoot: "Windows" }), undefined);
 });
 
-test("on Windows the probe does not start without a trusted system taskkill", async () => {
+test("Windows tree cleanup is available only for an existing system taskkill", () => {
   assert.equal(windowsTreeKillAvailable({}, {}), false);
-  assert.equal(windowsTreeKillAvailable({ SystemRoot: "C:\\Windows" }, {}), true);
+  assert.equal(windowsTreeKillAvailable({ SystemRoot: "C:\\definitely-missing-nova-guard" }, {}), false);
+  assert.equal(windowsTreeKillAvailable({ SystemRoot: "C:\\Windows" }, {}, () => true), true);
+});
 
+test("on Windows the probe does not start without a trusted system taskkill", windowsOnly, async () => {
   await tempRoot(async (root) => {
     const bin = path.join(root, "bin");
     const script = path.join(bin, "openclaw-entry.mjs");
