@@ -65,9 +65,28 @@ results arrive.
 
 [Tell me when the proxy ships](https://github.com/christopherbdaugherty96/nova-guard/issues/new?template=proxy-waitlist.yml)
 
+## Running it
+
+```text
+npm ci && npm run build
+node dist/cli.js check        # or: npx nova-guard check, once published
+```
+
+`nova-guard check` finds OpenClaw the way OpenClaw does (`OPENCLAW_HOME`,
+`OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `OPENCLAW_WORKSPACE_DIR`,
+`OPENCLAW_PROFILE`, `OPENCLAW_INCLUDE_ROOTS`, else `~/.openclaw`), reads the
+config and its `$include` files, runs `openclaw --version` (no shell, killed
+after 10 seconds), runs the four checks, and prints the report card. It makes
+no network calls and writes nothing. Anything it cannot verify (no OpenClaw
+state directory, an unreadable config or include, no version output) is
+reported as unknown, never as pass. The exit code is 0 whenever a card is
+printed and 2 for a usage error.
+
 ## Status
 
-Foundation only. The scanner is not usable yet.
+Early: the four v0.1 checks and the report card run locally; spend is not
+checked yet. `--profile` is not supported; set `OPENCLAW_STATE_DIR` and
+`OPENCLAW_CONFIG_PATH` (or `OPENCLAW_PROFILE` for the workspace) instead.
 
 ## License
 

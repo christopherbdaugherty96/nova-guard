@@ -1,9 +1,14 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { assessGatewayExposure, type GatewayExposureResult } from "../checks/gateway-exposure.js";
-import { assessPlaintextSecrets, nodeSecretFileReader, parseDotEnv } from "../checks/plaintext-secrets.js";
-import { assessRiskySkills } from "../checks/risky-skills.js";
+import {
+  assessPlaintextSecrets,
+  nodeSecretFileReader,
+  parseDotEnv,
+  type PlaintextSecretsResult,
+} from "../checks/plaintext-secrets.js";
+import { assessRiskySkills, type RiskySkillsResult } from "../checks/risky-skills.js";
 import { assessOpenClawVersion } from "../checks/version-advisories.js";
 import { advisoryDataDate } from "../data/openclaw-advisories.js";
 import { renderReportCard } from "../report/report-card.js";
@@ -47,6 +52,31 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
   }
 
   const config = loadOpenClawConfig(locations.configPath, locations.includeRoots);
+
+  let stateIsDirectory = false;
+  try {
+    stateIsDirectory = statSync(locations.stateDir).isDirectory();
+  } catch {
+    stateIsDirectory = false;
+  }
+  if (!stateIsDirectory && config.status === "missing") {
+    // Nothing of OpenClaw's was found here; an empty scan must not read as pass.
+    const summary = "No OpenClaw state directory was found, so this could not be checked.";
+    const secrets: PlaintextSecretsResult = { grade: "unknown", findings: [], unreadable: [], scanned: [], summary };
+    const skills: RiskySkillsResult = { grade: "unknown", findings: [], unknown: [], skills: 0, summary };
+    return renderReportCard({
+      homeDir: locations.homeDir,
+      osHomeDir: locations.osHomeDir,
+      stateDir: locations.stateDir,
+      configPath: locations.configPath,
+      toolVersion,
+      advisoryDataDate,
+      gateway: { grade: "unknown", bind: "unknown", auth: "unrecognized", summary },
+      version,
+      secrets,
+      skills,
+    });
+  }
 
   let gateway: GatewayExposureResult;
   if (config.status === "unreadable") {

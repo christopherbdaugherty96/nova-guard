@@ -21,6 +21,42 @@ Sources:
 - <https://docs.openclaw.ai/help/environment>
 - <https://github.com/openclaw/openclaw/blob/main/src/config/paths.ts>
 
+## Paths, config loading, and the check command
+
+Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
+(`src/config/paths.ts`, `src/config/state-dir.ts`, `src/infra/home-dir.ts`,
+`packages/normalization-core/src/home-dir.ts`, `src/cli/profile.ts`,
+`src/config/includes.ts`, `src/infra/deep-merge.ts`,
+`src/infra/container-environment.ts`).
+
+- Home: `OPENCLAW_HOME` (a leading `~` means the OS home), else `HOME`, else
+  `USERPROFILE`, else the OS home directory; blank, `undefined`, and `null`
+  count as unset.
+- State: `OPENCLAW_STATE_DIR` (leading `~` expanded to OpenClaw's home), else
+  `<home>/.openclaw`. Config: `OPENCLAW_CONFIG_PATH`, else
+  `<state>/openclaw.json`. The CLI's `--profile` sets these variables; a
+  `--profile` flag for nova-guard is not supported yet.
+- Default workspace: `OPENCLAW_WORKSPACE_DIR`, else `<state>/workspace` when
+  `OPENCLAW_STATE_DIR` is set, else `<home>/.openclaw-<profile>/workspace` for
+  a non-default `OPENCLAW_PROFILE`, else `<home>/.openclaw/workspace`.
+- `$include`: a string or array of strings; resolved against the including
+  file; confined lexically and after symlinks to the config directory or an
+  `OPENCLAW_INCLUDE_ROOTS` root; at most ten deep; cycles rejected; several
+  includes deep-merge in order (arrays concatenate, objects merge, other values
+  replace) and sibling keys merge over them (included content must then be an
+  object). Any rejection makes OpenClaw refuse the config, so the check command
+  treats the whole config as unreadable. Prototype keys are dropped. More than
+  256 include loads is also treated as unreadable.
+- Container detection (for the gateway's default bind): Fly.io machine
+  variables, `/.dockerenv`, `/run/.containerenv`, `/var/run/.containerenv`, or
+  a container cgroup for PID 1, evaluated on the host where nova-guard runs.
+- Gateway credentials count as available only when `OPENCLAW_GATEWAY_TOKEN` or
+  `OPENCLAW_GATEWAY_PASSWORD` is set in one of the `.env` files OpenClaw loads;
+  only presence is checked, never the value.
+- `openclaw --version` is run from `PATH` without a shell, with standard output
+  capped at 4 KiB and a 10-second hard timeout; on Windows, npm's
+  `openclaw.cmd` shim is resolved to its script, which is run with Node.
+
 ## Gateway
 
 - `gateway.bind` accepts `auto`, `loopback`, `lan`, `tailnet`, or `custom`.
