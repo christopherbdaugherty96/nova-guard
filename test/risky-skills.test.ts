@@ -74,6 +74,7 @@ test("a critical pattern in a workspace SKILL.md is reported by location, rule, 
       {
         ruleId: "shell-pipe-to-shell",
         severity: "critical",
+        root: path.join(at.stateDir, "workspace", "skills"),
         skillDir: dir,
         file: path.join(dir, "SKILL.md"),
         line: 6,

@@ -42,6 +42,8 @@ export type SkillConfigInput =
 export interface RiskySkillFinding {
   ruleId: string;
   severity: SkillRuleSeverity;
+  /** The skill root it was discovered under (managed, workspace, extra, ...). */
+  root: string;
   /** The skill directory as discovered (a location, never the skill's name field). */
   skillDir: string;
   file: string;
@@ -352,7 +354,7 @@ export function assessRiskySkills(
     }
   };
 
-  const skillsByRealPath = new Map<string, string>();
+  const skillsByRealPath = new Map<string, { dir: string; root: string }>();
   // Roots are walked once per real directory and policy, so many links to
   // one tree (for example, agents' workshop roots) cost one walk.
   const seenRoots = new Set<string>();
@@ -386,7 +388,7 @@ export function assessRiskySkills(
         break;
       }
       if (!(root.container && depth === 0) && hasSkillFile(real)) {
-        if (!skillsByRealPath.has(real)) skillsByRealPath.set(real, dir);
+        if (!skillsByRealPath.has(real)) skillsByRealPath.set(real, { dir, root: rootDir });
         continue;
       }
       if (depth >= maxDiscoveryDepth) continue;
@@ -448,11 +450,12 @@ export function assessRiskySkills(
     }
   }
 
-  const report = (skillDir: string, file: string, hits: ReturnType<typeof scanSource>) => {
+  const report = (root: string, skillDir: string, file: string, hits: ReturnType<typeof scanSource>) => {
     for (const hit of hits) {
       findings.push({
         ruleId: hit.ruleId,
         severity: hit.severity,
+        root: sanitize(root),
         skillDir: sanitize(skillDir),
         file: sanitize(file),
         line: hit.line,
@@ -492,7 +495,7 @@ export function assessRiskySkills(
   };
 
   let totalScanEntries = 0;
-  for (const [skillReal, skillDir] of skillsByRealPath) {
+  for (const [skillReal, { dir: skillDir, root: skillRoot }] of skillsByRealPath) {
     if (timeUp()) break;
     // SKILL.md: OpenClaw applies both its skill-text and source rules.
     const skillFile = path.join(skillDir, "SKILL.md");
@@ -500,7 +503,7 @@ export function assessRiskySkills(
       ...scanSkillContent(text),
       ...scanSource(text),
     ]);
-    if (skillHits) report(skillDir, skillFile, skillHits);
+    if (skillHits) report(skillRoot, skillDir, skillFile, skillHits);
 
     // Script files, walked like OpenClaw's scanner: no symlinks, no dot
     // entries, no node_modules.
@@ -540,7 +543,7 @@ export function assessRiskySkills(
     for (const { file, real } of files.slice(0, maxScriptFiles)) {
       if (timeUp()) break;
       const hits = scanOnce(file, real, maxScriptFileBytes, scanSource);
-      if (hits) report(skillDir, file, hits);
+      if (hits) report(skillRoot, skillDir, file, hits);
     }
   }
 

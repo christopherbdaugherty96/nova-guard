@@ -35,3 +35,10 @@ export type {
   SkillLocations,
   SkillUnknownReason,
 } from "./checks/risky-skills.js";
+export {
+  renderReportCard,
+  reportCardPageLines,
+  reportCardWidth,
+  waitlistUrl,
+} from "./report/report-card.js";
+export type { ReportCardInput } from "./report/report-card.js";

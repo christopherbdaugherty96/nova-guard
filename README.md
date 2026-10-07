@@ -28,6 +28,16 @@ a bundled vulnerability list, plaintext secret locations, risky skill
 patterns, and locally available recent usage or spend. When spend cannot be
 established from a documented local source, the report says `unknown`.
 
+The report card (`renderReportCard`) is a deterministic presentation layer
+over the check results: an overall grade (the worst check: critical, warning,
+unknown, pass), findings most severe first, each with a plain-language fix, and
+an explicit "Could not be checked" section. It fits one printed page (80
+columns, 66 lines; the waitlist link is printed whole). For sharing, it is
+redacted further than the checks: the home directory prints as `~`, agent ids
+in paths as `*`, risky skills by root, file kind, rule, and line only (never a
+skill or file name), and configured gateway values are never printed. Spend is
+shown as not checked until a documented local source exists.
+
 Implementation will land as small reviewed pull requests. Each scanner check
 must begin with a regression test that demonstrably fails before the fix.
 

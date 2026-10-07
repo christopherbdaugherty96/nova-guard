@@ -157,9 +157,9 @@ test("secret findings show the redacted location and key path, home as ~, agent 
     }),
   );
   const home = (...parts: string[]) => ["~", ...parts].join(path.sep);
-  assert.ok(card.includes(`${home(".openclaw", ".env")}:3  OPENAI_API_KEY`), card);
-  assert.ok(card.includes(`${home(".openclaw", "openclaw.json")}  env.vars.*`), card);
-  assert.ok(card.includes(`${home(".openclaw", "agents", "*", "agent", "models.json")}  providers.*.apiKey`), card);
+  assert.ok(card.includes(`${home(".openclaw", ".env")}:3, key OPENAI_API_KEY`), card);
+  assert.ok(card.includes(`${home(".openclaw", "openclaw.json")}, key env.vars.*`), card);
+  assert.ok(card.includes(`${home(".openclaw", "agents", "*", "agent", "models.json")}, key providers.*.apiKey`), card);
   assert.ok(!card.includes(homeDir));
   assert.ok(!card.includes("letmein"));
 });
@@ -265,7 +265,7 @@ test("long paths are shortened to fit the page width", () => {
     }),
   );
   assertFitsOnePage(card);
-  assert.ok(card.includes("openclaw.json  gateway.auth.token"), card);
+  assert.ok(card.includes("openclaw.json, key gateway.auth.token"), card);
 });
 
 test("rendering is deterministic and control characters are stripped", () => {
