@@ -730,3 +730,42 @@ test("path-like settings the checks read must be strings, or the config is unrea
     assert.equal(loadOpenClawConfig(configPath, []).status, "ok");
   });
 });
+
+test("every gateway field the gateway check reads must have a shape OpenClaw accepts", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    for (const gateway of [
+      '{ "bind": "loopback", "auth": { "mode": 5 } }',
+      '{ "bind": "loopback", "auth": { "mode": "magic" } }',
+      '{ "bind": 5 }',
+      '{ "bind": "everywhere" }',
+      '{ "bind": "custom", "customBindHost": 1 }',
+      '{ "tailscale": { "mode": "public" } }',
+      '{ "trustedProxies": "10.0.0.1" }',
+      '{ "trustedProxies": [5] }',
+      '{ "auth": { "token": 5 } }',
+      '{ "auth": { "password": [] } }',
+      '{ "auth": { "trustedProxy": "x" } }',
+      '{ "auth": { "trustedProxy": { "userHeader": 5 } } }',
+    ]) {
+      write(configPath, `{ "gateway": ${gateway} }`);
+      assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" }, gateway);
+    }
+    write(
+      configPath,
+      '{ "gateway": { "bind": "custom", "customBindHost": "127.0.0.1", "trustedProxies": ["10.0.0.1"], "tailscale": { "mode": "off" }, "auth": { "mode": "trusted-proxy", "token": { "source": "env", "id": "T" }, "password": "${P}", "trustedProxy": { "userHeader": "x-user" } } } }',
+    );
+    assert.equal(loadOpenClawConfig(configPath, []).status, "ok");
+  });
+});
+
+test("a project-local npm shim may point at its sibling package, but no further", () => {
+  const bin = path.resolve(path.sep, "proj", "node_modules", ".bin");
+  assert.equal(
+    npmShimScript('"%dp0%\\..\\openclaw\\openclaw.mjs" %*', bin),
+    path.resolve(path.sep, "proj", "node_modules", "openclaw", "openclaw.mjs"),
+  );
+  assert.equal(npmShimScript('"%dp0%\\..\\..\\evil.mjs" %*', bin), undefined);
+  const globalDir = path.resolve(path.sep, "npm");
+  assert.equal(npmShimScript('"%dp0%\\..\\openclaw\\openclaw.mjs" %*', globalDir), undefined);
+});
