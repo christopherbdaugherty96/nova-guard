@@ -859,3 +859,40 @@ test("a file SecretRef id with a ${VAR} template is unverifiable: OpenClaw subst
     assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" });
   });
 });
+
+// ------------------------------------------------------------- review round 8
+
+test("an absolute OPENCLAW_HOME resolves OpenClaw's paths even without a usable OS home", () => {
+  const ocHome = path.resolve(path.sep, "srv", "oc");
+  const expected = {
+    homeDir: ocHome,
+    osHomeDir: undefined,
+    stateDir: path.join(ocHome, ".openclaw"),
+    configPath: path.join(ocHome, ".openclaw", "openclaw.json"),
+    workspaceDir: path.join(ocHome, ".openclaw", "workspace"),
+    defaultStateDir: true,
+    includeRoots: [],
+  };
+  const noHome = () => {
+    throw new Error("no home");
+  };
+  assert.deepEqual(resolveOpenClawLocations({ OPENCLAW_HOME: ocHome }, noHome), expected);
+  assert.deepEqual(resolveOpenClawLocations({ HOME: "relative", OPENCLAW_HOME: ocHome }, noHome), expected);
+  // A ~ in OPENCLAW_HOME still needs the OS home.
+  assert.equal(resolveOpenClawLocations({ HOME: "relative", OPENCLAW_HOME: "~/oc" }, noHome), undefined);
+});
+
+test("without a usable OS home, OPENCLAW_HOME is scanned and the OS-home skills root is unknown", async () => {
+  await tempRoot((root) => {
+    const ocHome = path.join(root, "oc");
+    const state = path.join(ocHome, ".openclaw");
+    write(path.join(state, "openclaw.json"), `{ gateway: { bind: "lan", auth: { mode: "none" } } }`);
+    write(path.join(state, ".env"), "OPENAI_API_KEY=letmein-value\n");
+    const result = runCli(["check"], { HOME: "relative", USERPROFILE: "relative", OPENCLAW_HOME: ocHome, ...pathEnv(path.join(root, "nb")) });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^ {2}Gateway exposure +CRITICAL$/m, result.stdout);
+    assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, result.stdout);
+    assert.match(result.stdout, /^ {2}Risky skills +UNKNOWN$/m, result.stdout);
+    assert.ok(!result.stdout.includes("letmein"), result.stdout);
+  });
+});
