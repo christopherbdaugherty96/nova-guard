@@ -57,6 +57,9 @@ function isSecretRef(value: unknown): boolean {
     case "store":
       return envSecretId.test(id);
     case "file":
+      // OpenClaw substitutes ${VAR} before validating, so a templated id cannot
+      // be verified from the raw config (the other id grammars reject "$").
+      if (id.includes("${")) return false;
       return id === "value" || (id.startsWith("/") && id.slice(1).split("/").every((s) => fileSecretSegment.test(s)));
     case "exec":
       return execSecretId.test(id) && id.split("/").every((s) => s !== "." && s !== "..");
