@@ -706,3 +706,8 @@ test("without a state directory, the global gateway.env is still scanned for pla
     assert.ok(!result.stdout.includes("letmein"));
   });
 });
+
+test("a relative OPENCLAW_HOME is not trusted either", () => {
+  const home = path.resolve(path.sep, "home", "chris");
+  assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_HOME: "oc-home" }, () => home), undefined);
+});
