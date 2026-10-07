@@ -108,7 +108,9 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
   // OpenClaw's audit also reads models.json in configured agent directories and
   // in OPENCLAW_AGENT_DIR / PI_CODING_AGENT_DIR (listAgentModelsJsonPaths).
   const agentDirs = configuredAgentDirs(locations, config);
-  const extraAgentDirs = agentDirs.dirs.filter((dir) => !isInside(path.join(locations.stateDir, "agents"), dir));
+  // Every configured directory is read (duplicates are dropped by the check);
+  // the card itself leaves <stateDir>/agents paths to its own redaction.
+  const extraAgentDirs = [...agentDirs.dirs];
   let unverifiableAgentDirs = agentDirs.unverifiable;
   const overrideDir = deps.env.OPENCLAW_AGENT_DIR?.trim() || deps.env.PI_CODING_AGENT_DIR?.trim();
   if (overrideDir) {

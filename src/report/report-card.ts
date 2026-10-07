@@ -194,7 +194,17 @@ export function renderReportCard(input: ReportCardInput): string {
       const relative = path.relative(base, file);
       return relative === "" ? label : [label, relative].join(path.sep);
     };
-    const shortened = bases.map(([base, label]) => shorten(base, label)).find((value) => value !== undefined) ?? file;
+    // Home, state, and config keep their order; an agent directory is used
+    // only when it is more specific than all of them, and the innermost one
+    // wins, so a broader base never exposes a narrower user-chosen name.
+    const fixed = bases.filter(([, label]) => label !== "<agent-dir>");
+    const fixedMatch = fixed.find(([base]) => isInside(base, file));
+    const agentMatch = bases
+      .filter(([base, label]) => label === "<agent-dir>" && isInside(base, file))
+      .sort((a, b) => b[0].length - a[0].length)[0];
+    const longestFixed = Math.max(-1, ...fixed.filter(([base]) => isInside(base, file)).map(([base]) => base.length));
+    const chosen = agentMatch && agentMatch[0].length > longestFixed ? agentMatch : fixedMatch;
+    const shortened = (chosen ? shorten(chosen[0], chosen[1]) : undefined) ?? file;
     return sanitize(shortened);
   };
 
