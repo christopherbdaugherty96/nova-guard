@@ -6,6 +6,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test",
     "update-advisories": "tsx scripts/update-advisories.ts"
@@ -23,5 +24,13 @@
   "dependencies": {
     "json5": "2.2.3",
     "semver": "7.8.5"
-  }
+  },
+  "bin": {
+    "nova-guard": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
 }

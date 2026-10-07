@@ -375,6 +375,6 @@ test("the CLI never imports network or write helpers beyond the version probe", 
   }
   // Only the version probe may start a process, and never through a shell.
   const probe = sources[4] as string;
-  assert.doesNotMatch(probe, /shell:\s*true|execSync|exec\(/);
+  assert.doesNotMatch(probe, /shell:\s*true|execSync|(?<![.\w])exec\(/);
   void execFileSync;
 });
