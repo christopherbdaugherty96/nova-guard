@@ -8,7 +8,7 @@ import test from "node:test";
 import { loadOpenClawConfig } from "../src/cli/config.js";
 import { detectContainer } from "../src/cli/container.js";
 import { resolveOpenClawLocations } from "../src/cli/locate.js";
-import { npmShimScript, probeOpenClawVersion } from "../src/cli/version-probe.js";
+import { npmShimScript, probeOpenClawVersion, windowsTreeKillCommand } from "../src/cli/version-probe.js";
 import { toolVersion } from "../src/version.js";
 
 const posixOnly = { skip: process.platform === "win32" };
@@ -471,27 +471,46 @@ test("a relative or empty PATH entry is never searched for openclaw", posixOnly,
   });
 });
 
-test("a timed-out openclaw is killed with its descendants", posixOnly, async () => {
+test("a timed-out openclaw is killed with its descendants, on every platform", async () => {
   await tempRoot(async (root) => {
     const bin = path.join(root, "bin");
     const marker = path.join(root, "child.pid");
     fakeOpenClaw(
       bin,
       `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
-       const c = spawn("${process.execPath}", ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+       const c = spawn(${JSON.stringify(process.execPath)}, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
        writeFileSync(${JSON.stringify(marker)}, String(c.pid)); setInterval(() => {}, 1000);`,
     );
     assert.equal(await probeOpenClawVersion({ env: pathEnv(bin), timeoutMs: 1500 }), undefined);
-    await new Promise((resolve) => setTimeout(resolve, 300));
     const pid = Number(readFileSync(marker, "utf8"));
-    // Gone, or a zombie awaiting reaping by init: either way no longer running.
-    let state = "";
-    try {
-      state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
-    } catch {
-      state = "";
+    const running = () => {
+      if (process.platform === "win32") {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      // Gone, or a zombie awaiting reaping by init: either way no longer running.
+      try {
+        const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
+        return state !== "" && !state.startsWith("Z");
+      } catch {
+        return false;
+      }
+    };
+    const deadline = Date.now() + 5000;
+    while (running() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    const stillRunning = running();
+    if (stillRunning) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
     }
-    assert.ok(state === "" || state.startsWith("Z"), `descendant still running: ${state}`);
+    assert.equal(stillRunning, false, "the descendant is still running");
   });
 });
 
@@ -521,4 +540,15 @@ test("an omitted bind is unknown unless nova-guard itself runs in a container", 
 test("the package builds before it is packed or installed from git", () => {
   const pkg = JSON.parse(readFileSync(path.join(repo, "package.json"), "utf8")) as { scripts: Record<string, string> };
   assert.equal(pkg.scripts.prepare, "npm run build");
+});
+
+test("on Windows the probe's process tree is killed by the system taskkill, not via a shell or PATH", () => {
+  const systemRoot = "C:\\Windows";
+  assert.deepEqual(windowsTreeKillCommand(4242, { SystemRoot: systemRoot }), {
+    command: path.win32.join(systemRoot, "System32", "taskkill.exe"),
+    args: ["/PID", "4242", "/T", "/F"],
+  });
+  // Without a trustworthy absolute SystemRoot there is no tree kill to run.
+  assert.equal(windowsTreeKillCommand(4242, {}), undefined);
+  assert.equal(windowsTreeKillCommand(4242, { SystemRoot: "Windows" }), undefined);
 });
