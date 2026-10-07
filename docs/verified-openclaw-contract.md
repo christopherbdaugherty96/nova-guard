@@ -63,8 +63,13 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   when present; `agents.list` an array of objects and `agents.entries` values
   objects, with string `id`, `workspace`, and `agentDir`;
   `agents.defaults.workspace` a string; `skills.load.extraDirs` and
-  `allowSymlinkTargets` arrays of strings. Otherwise OpenClaw refuses it and so
-  does the check command.
+  `allowSymlinkTargets` arrays of strings; and every gateway field the gateway
+  check reads must be valid: `bind` one of `auto`, `loopback`, `lan`, `tailnet`,
+  `custom`; `customBindHost` a string; `trustedProxies` an array of strings;
+  `tailscale.mode` one of `off`, `serve`, `funnel`; `auth.mode` one of `none`,
+  `token`, `password`, `trusted-proxy`; `auth.token`/`auth.password` a string
+  or SecretRef object; `auth.trustedProxy.userHeader` a string. Otherwise
+  OpenClaw refuses it and so does the check command.
   Hardlinked include files are refused, as OpenClaw's guarded open does, and
   include merges that would copy more than 2,000,000 entries are treated as
   unreadable. Outside include merges only `__proto__` is dropped.
@@ -83,7 +88,8 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   survives. On Windows a timed-out probe's tree is ended with
   `%SystemRoot%\System32\taskkill.exe /T /F` (absolute path, no shell) while
   the probe still runs, before anything else; after a clean exit nothing is
-  killed, since its PID may already be reused. On Windows, npm's `openclaw.cmd` shim is resolved to its
+  killed, since its PID may already be reused. On Windows, npm's `openclaw.cmd` shim (global, or a project's
+  `node_modules/.bin` shim pointing at its sibling package) is resolved to its
   script, which is run with Node.
 
 ## Gateway

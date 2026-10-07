@@ -32,8 +32,13 @@ export function npmShimScript(shimText: string, shimDir: string): string | undef
   const match = /"%dp0%\\([^"%]+\.(?:m?js|cjs))"/i.exec(shimText);
   if (!match?.[1]) return undefined;
   const script = path.resolve(shimDir, ...match[1].split("\\"));
-  const relative = path.relative(shimDir, script);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
+  // A global shim's script lives under its own directory; a project-local
+  // shim in node_modules/.bin points at its sibling package in node_modules.
+  const root = path.basename(shimDir).toLowerCase() === ".bin" ? path.dirname(shimDir) : shimDir;
+  const relative = path.relative(root, script);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return undefined;
+  }
   return script;
 }
 

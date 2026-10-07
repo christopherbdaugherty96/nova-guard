@@ -102,15 +102,39 @@ function hasLoadableShape(config: unknown): boolean {
   // An agent entry: an object whose id, workspace, and agentDir are strings.
   const agent = (value: unknown) =>
     isPlainObject(value) && text(value.id) && text(value.workspace) && text(value.agentDir);
+  const oneOf = (value: unknown, allowed: readonly string[]) =>
+    value === undefined || (typeof value === "string" && allowed.includes(value));
+  // A secret: a literal or ${VAR} string, or a SecretRef object.
+  const secret = (value: unknown) => value === undefined || typeof value === "string" || isPlainObject(value);
   const gateway = config.gateway;
   const skills = config.skills;
   const agents = config.agents;
   const load = isPlainObject(skills) ? skills.load : undefined;
+  // Every gateway field the gateway check reads, in the shapes and values
+  // OpenClaw's schema accepts (docs/verified-openclaw-contract.md, Gateway).
+  const gatewayOk = (value: Record<string, unknown>) => {
+    const auth = value.auth;
+    const tailscale = value.tailscale;
+    return (
+      oneOf(value.bind, ["auto", "loopback", "lan", "tailnet", "custom"]) &&
+      text(value.customBindHost) &&
+      strings(value.trustedProxies) &&
+      section(tailscale) &&
+      (!isPlainObject(tailscale) || oneOf(tailscale.mode, ["off", "serve", "funnel"])) &&
+      section(auth) &&
+      (!isPlainObject(auth) ||
+        (oneOf(auth.mode, ["none", "token", "password", "trusted-proxy"]) &&
+          secret(auth.token) &&
+          secret(auth.password) &&
+          section(auth.trustedProxy) &&
+          (!isPlainObject(auth.trustedProxy) || text(auth.trustedProxy.userHeader))))
+    );
+  };
   return (
     section(gateway) &&
     section(agents) &&
     section(skills) &&
-    (!isPlainObject(gateway) || (section(gateway.auth) && section(gateway.tailscale))) &&
+    (!isPlainObject(gateway) || gatewayOk(gateway)) &&
     (!isPlainObject(agents) ||
       ((agents.list === undefined || (Array.isArray(agents.list) && agents.list.every(agent))) &&
         section(agents.entries) &&
