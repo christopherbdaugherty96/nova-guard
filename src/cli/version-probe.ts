@@ -11,7 +11,8 @@ import path from "node:path";
  * Only absolute PATH entries are searched (an empty or relative entry would
  * mean the current directory), and the absolute path found is what runs. On
  * POSIX the probe gets its own process group, so a timeout kills everything it
- * started. On Windows, npm installs `openclaw.cmd`, which only a shell can
+ * started; on Windows the system taskkill.exe (by absolute path, /T) does the
+ * same for the process tree. On Windows, npm installs `openclaw.cmd`, which only a shell can
  * run, so its script is read from npm's shim and run directly with this Node
  * binary. `openclaw --version` is OpenClaw's own code; nova-guard writes
  * nothing, but cannot vouch for what OpenClaw does when asked its version.
@@ -82,6 +83,35 @@ function windowsCommand(env: NodeJS.ProcessEnv): { command: string; args: string
   return undefined;
 }
 
+/** The system taskkill.exe that ends a process tree, or undefined without an absolute SystemRoot. */
+export function windowsTreeKillCommand(
+  pid: number,
+  env: NodeJS.ProcessEnv,
+): { command: string; args: string[] } | undefined {
+  const systemRoot = (env.SystemRoot ?? env.SYSTEMROOT ?? "").trim();
+  if (!systemRoot || !path.win32.isAbsolute(systemRoot)) return undefined;
+  return {
+    command: path.win32.join(systemRoot, "System32", "taskkill.exe"),
+    args: ["/PID", String(pid), "/T", "/F"],
+  };
+}
+
+/** Ends the probe's whole process tree on Windows; resolves when done or after 3 seconds. */
+function killWindowsTree(pid: number, env: NodeJS.ProcessEnv): Promise<void> {
+  const tree = windowsTreeKillCommand(pid, env) ?? windowsTreeKillCommand(pid, process.env);
+  if (!tree) return Promise.resolve();
+  return new Promise((done) => {
+    const killer = spawn(tree.command, tree.args, { shell: false, stdio: "ignore", windowsHide: true });
+    const timer = setTimeout(done, 3000);
+    const end = () => {
+      clearTimeout(timer);
+      done();
+    };
+    killer.on("exit", end);
+    killer.on("error", end);
+  });
+}
+
 export function probeOpenClawVersion(options: VersionProbeOptions): Promise<string | undefined> {
   const platform = options.platform ?? process.platform;
   const posix = platform !== "win32";
@@ -104,18 +134,24 @@ export function probeOpenClawVersion(options: VersionProbeOptions): Promise<stri
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (value === undefined && posix && child.pid !== undefined) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          // The group is already gone.
+      let treeKilled: Promise<void> = Promise.resolve();
+      if (value === undefined && child.pid !== undefined) {
+        if (posix) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            // The group is already gone.
+          }
+        } else if (child.exitCode === null && child.signalCode === null) {
+          // Only while it still runs: an exited child's PID may already be reused.
+          treeKilled = killWindowsTree(child.pid, options.env);
         }
       }
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       child.stdout?.destroy();
       // A descendant holding the pipe open must not keep nova-guard running.
       child.unref();
-      resolve(value);
+      void treeKilled.then(() => resolve(value));
     };
     const timer = setTimeout(() => finish(undefined), options.timeoutMs ?? defaultTimeoutMs);
     child.on("error", () => finish(undefined));

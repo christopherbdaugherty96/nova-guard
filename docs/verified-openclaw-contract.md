@@ -69,8 +69,10 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
 - `openclaw --version` is run without a shell from the first absolute `PATH`
   entry holding an executable `openclaw` (empty or relative entries would mean
   the current directory), with standard output capped at 4 KiB and a 10-second
-  hard timeout that kills its whole process group on POSIX; on Windows, npm's
-  `openclaw.cmd` shim is resolved to its script, which is run with Node.
+  hard timeout that kills its whole process group on POSIX and its process
+  tree on Windows (with `%SystemRoot%\System32\taskkill.exe /T /F`, by absolute
+  path, no shell); on Windows, npm's `openclaw.cmd` shim is resolved to its
+  script, which is run with Node.
 
 ## Gateway
 
