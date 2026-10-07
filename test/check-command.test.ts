@@ -378,3 +378,15 @@ test("the CLI never imports network or write helpers beyond the version probe", 
   assert.doesNotMatch(probe, /shell:\s*true|execSync|(?<![.\w])exec\(/);
   void execFileSync;
 });
+
+test("with no OpenClaw state directory, nothing is graded pass", async () => {
+  await tempRoot((root) => {
+    const home = path.join(root, "home");
+    mkdirSync(home, { recursive: true });
+    const result = runCli(["check"], { HOME: home, USERPROFILE: home, ...pathEnv(path.join(root, "nb")) });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^Overall: UNKNOWN$/m);
+    assert.doesNotMatch(result.stdout, / PASS$/m);
+    assert.match(result.stdout, /No OpenClaw state directory was found/);
+  });
+});
