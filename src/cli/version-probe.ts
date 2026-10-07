@@ -118,13 +118,26 @@ export function windowsTreeKillCommand(
 export function windowsTreeKillAvailable(
   env: NodeJS.ProcessEnv,
   fallbackEnv: NodeJS.ProcessEnv = process.env,
+  fileExists: (file: string) => boolean = isFile,
 ): boolean {
-  return windowsTreeKillCommand(1, env) !== undefined || windowsTreeKillCommand(1, fallbackEnv) !== undefined;
+  return trustedWindowsTreeKillCommand(1, env, fallbackEnv, fileExists) !== undefined;
+}
+
+function trustedWindowsTreeKillCommand(
+  pid: number,
+  env: NodeJS.ProcessEnv,
+  fallbackEnv: NodeJS.ProcessEnv = process.env,
+  fileExists: (file: string) => boolean = isFile,
+): { command: string; args: string[] } | undefined {
+  for (const candidate of [windowsTreeKillCommand(pid, env), windowsTreeKillCommand(pid, fallbackEnv)]) {
+    if (candidate && fileExists(candidate.command)) return candidate;
+  }
+  return undefined;
 }
 
 /** Ends the probe's whole process tree on Windows; resolves when done or after 3 seconds. */
 function killWindowsTree(pid: number, env: NodeJS.ProcessEnv): Promise<void> {
-  const tree = windowsTreeKillCommand(pid, env) ?? windowsTreeKillCommand(pid, process.env);
+  const tree = trustedWindowsTreeKillCommand(pid, env);
   if (!tree) return Promise.resolve();
   return new Promise((done) => {
     const killer = spawn(tree.command, tree.args, { shell: false, stdio: "ignore", windowsHide: true });
