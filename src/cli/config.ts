@@ -40,6 +40,31 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+// OpenClaw's SecretRef grammar (src/secrets/ref-contract.ts at b8324c64).
+const secretProviderAlias = /^[a-z][a-z0-9_-]{0,63}$/;
+const envSecretId = /^[A-Z][A-Z0-9_]{0,127}$/;
+const execSecretId = /^[A-Za-z0-9][A-Za-z0-9._:/#-]{0,255}$/;
+const fileSecretSegment = /^(?:[^~]|~0|~1)*$/;
+
+function isSecretRef(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length !== 3 || !["source", "provider", "id"].every((key) => keys.includes(key))) return false;
+  const { source, provider, id } = value;
+  if (typeof provider !== "string" || !secretProviderAlias.test(provider) || typeof id !== "string") return false;
+  switch (source) {
+    case "env":
+    case "store":
+      return envSecretId.test(id);
+    case "file":
+      return id === "value" || (id.startsWith("/") && id.slice(1).split("/").every((s) => fileSecretSegment.test(s)));
+    case "exec":
+      return execSecretId.test(id) && id.split("/").every((s) => s !== "." && s !== "..");
+    default:
+      return false;
+  }
+}
+
 interface MergeBudget {
   work: number;
 }
@@ -104,8 +129,10 @@ function hasLoadableShape(config: unknown): boolean {
     isPlainObject(value) && text(value.id) && text(value.workspace) && text(value.agentDir);
   const oneOf = (value: unknown, allowed: readonly string[]) =>
     value === undefined || (typeof value === "string" && allowed.includes(value));
-  // A secret: a literal or ${VAR} string, or a SecretRef object.
-  const secret = (value: unknown) => value === undefined || typeof value === "string" || isPlainObject(value);
+  // A secret: a literal or ${VAR} string, or a SecretRef OpenClaw's schema
+  // accepts (zod-schema.secret-input.ts, secrets/ref-contract.ts at b8324c64):
+  // exactly source, provider, and id, with the id grammar of its source.
+  const secret = (value: unknown) => value === undefined || typeof value === "string" || isSecretRef(value);
   const gateway = config.gateway;
   const skills = config.skills;
   const agents = config.agents;

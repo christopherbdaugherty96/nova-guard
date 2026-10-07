@@ -68,8 +68,14 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   `custom`; `customBindHost` a string; `trustedProxies` an array of strings;
   `tailscale.mode` one of `off`, `serve`, `funnel`; `auth.mode` one of `none`,
   `token`, `password`, `trusted-proxy`; `auth.token`/`auth.password` a string
-  or SecretRef object; `auth.trustedProxy.userHeader` a string. Otherwise
-  OpenClaw refuses it and so does the check command.
+  or a SecretRef with exactly `source` (`env`, `file`, `exec`, `store`),
+  `provider` (`/^[a-z][a-z0-9_-]{0,63}$/`), and an `id` valid for its source
+  (src/secrets/ref-contract.ts); `auth.trustedProxy.userHeader` a string.
+  Otherwise OpenClaw refuses it and so does the check command.
+- If the resolved state directory does not exist, every check still runs (an
+  explicit `OPENCLAW_CONFIG_PATH`, `~/.agents/skills`, `OPENCLAW_WORKSPACE_DIR`,
+  and `~/.config/openclaw/gateway.env` are still read) and keeps its findings,
+  but a check that would pass is reported unknown.
   Hardlinked include files are refused, as OpenClaw's guarded open does, and
   include merges that would copy more than 2,000,000 entries are treated as
   unreadable. Outside include merges only `__proto__` is dropped.

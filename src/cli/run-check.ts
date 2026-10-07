@@ -59,47 +59,15 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
   } catch {
     stateIsDirectory = false;
   }
-  if (!stateIsDirectory && config.status === "missing") {
-    // Nothing of OpenClaw's was found here; an empty scan must not read as pass.
-    const summary = "No OpenClaw state directory was found, so this could not be checked.";
-    // OpenClaw still loads ~/.config/openclaw/gateway.env, so secrets are
-    // scanned too; with nothing found, the result is unknown, not pass.
-    const foundSecrets = assessPlaintextSecrets({
-      stateDir: locations.stateDir,
-      configPath: locations.configPath,
-      homeDir: locations.homeDir,
-      includeRoots: locations.includeRoots,
-    });
-    const secrets: PlaintextSecretsResult =
-      foundSecrets.grade === "pass" ? { ...foundSecrets, grade: "unknown", summary } : foundSecrets;
-    // OpenClaw still loads skills from ~/.agents/skills and OPENCLAW_WORKSPACE_DIR,
-    // so they are scanned; with nothing found, the result is unknown, not pass.
-    const scanned = assessRiskySkills(
-      {
-        stateDir: locations.stateDir,
-        homeDir: locations.homeDir,
-        osHomeDir: locations.osHomeDir,
-        ...(locations.workspaceDir === undefined ? {} : { workspaceDir: locations.workspaceDir }),
-      },
-      config,
-    );
-    const skills: RiskySkillsResult = scanned.grade === "pass" ? { ...scanned, grade: "unknown", summary } : scanned;
-    return renderReportCard({
-      homeDir: locations.homeDir,
-      osHomeDir: locations.osHomeDir,
-      stateDir: locations.stateDir,
-      configPath: locations.configPath,
-      toolVersion,
-      advisoryDataDate,
-      gateway: { grade: "unknown", bind: "unknown", auth: "unrecognized", summary },
-      version,
-      secrets,
-      skills,
-    });
-  }
-
+  // Without OpenClaw's state directory nothing here can be verified as
+  // OpenClaw's: every check still runs (an explicit config, ~/.agents/skills,
+  // OPENCLAW_WORKSPACE_DIR, and ~/.config/openclaw/gateway.env are still read)
+  // and keeps its findings, but none of them is graded pass.
+  const noState = "No OpenClaw state directory was found, so this could not be checked.";
   let gateway: GatewayExposureResult;
-  if (config.status === "unreadable") {
+  if (!stateIsDirectory && config.status === "missing") {
+    gateway = { grade: "unknown", bind: "unknown", auth: "unrecognized", summary: noState };
+  } else if (config.status === "unreadable") {
     gateway = {
       grade: "unknown",
       bind: "unknown",
@@ -132,7 +100,7 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     });
   }
 
-  const secrets = assessPlaintextSecrets({
+  let secrets = assessPlaintextSecrets({
     stateDir: locations.stateDir,
     configPath: locations.configPath,
     homeDir: locations.homeDir,
@@ -154,6 +122,12 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
       grade: skills.grade === "pass" ? "unknown" : skills.grade,
       unknown: [...skills.unknown, { path: "OPENCLAW_PROFILE workspace", reason: "unreadable" }],
     };
+  }
+
+  if (!stateIsDirectory) {
+    if (gateway.grade === "pass") gateway = { ...gateway, grade: "unknown", summary: noState };
+    if (secrets.grade === "pass") secrets = { ...secrets, grade: "unknown", summary: noState };
+    if (skills.grade === "pass") skills = { ...skills, grade: "unknown", summary: noState };
   }
 
   return renderReportCard({
