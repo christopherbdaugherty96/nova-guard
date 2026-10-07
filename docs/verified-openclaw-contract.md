@@ -68,10 +68,14 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   workspace, so risky skills are then unknown.
 - `openclaw --version` is run without a shell from the first absolute `PATH`
   entry holding an executable `openclaw` (empty or relative entries would mean
-  the current directory), with standard output capped at 4 KiB and a 10-second
-  hard timeout that kills its whole process group on POSIX and its process
-  tree on Windows (with `%SystemRoot%\System32\taskkill.exe /T /F`, by absolute
-  path, no shell); on Windows, npm's `openclaw.cmd` shim is resolved to its
+  the current directory), and its environment's `PATH` keeps only absolute
+  entries (npm's bin runs `#!/usr/bin/env node`). Standard output is capped at
+  4 KiB, with a 10-second hard timeout. On POSIX it runs in its own process
+  group, which is killed whenever the probe ends, so nothing it started
+  survives. On Windows a timed-out probe's tree is ended with
+  `%SystemRoot%\System32\taskkill.exe /T /F` (absolute path, no shell) while
+  the probe still runs, before anything else; after a clean exit nothing is
+  killed, since its PID may already be reused. On Windows, npm's `openclaw.cmd` shim is resolved to its
   script, which is run with Node.
 
 ## Gateway

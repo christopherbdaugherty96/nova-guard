@@ -40,14 +40,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-function sanitize(value: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (!blockedKeys.has(key)) out[key] = isPlainObject(entry) ? sanitize(entry) : entry;
-  }
-  return out;
-}
-
 interface MergeBudget {
   work: number;
 }
@@ -55,6 +47,16 @@ interface MergeBudget {
 function charge(budget: MergeBudget, amount: number): void {
   budget.work += amount;
   if (budget.work > maxMergeWork) throw new IncludeRejected();
+}
+
+// A deep copy: every nested key it copies is charged to the merge budget.
+function sanitize(value: Record<string, unknown>, budget: MergeBudget): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    charge(budget, 1);
+    if (!blockedKeys.has(key)) out[key] = isPlainObject(entry) ? sanitize(entry, budget) : entry;
+  }
+  return out;
 }
 
 function sizeOf(value: unknown): number {
@@ -68,13 +70,13 @@ function deepMerge(base: unknown, override: unknown, budget: MergeBudget): unkno
     return [...base, ...override];
   }
   if (!isPlainObject(base) || !isPlainObject(override)) return override;
-  charge(budget, sizeOf(base) + sizeOf(override));
-  const merged = sanitize(base);
+  charge(budget, sizeOf(override));
+  const merged = sanitize(base, budget);
   for (const [key, value] of Object.entries(override)) {
     if (blockedKeys.has(key)) continue;
     const current = merged[key];
     if (isPlainObject(value)) {
-      merged[key] = isPlainObject(current) ? deepMerge(current, value, budget) : sanitize(value);
+      merged[key] = isPlainObject(current) ? deepMerge(current, value, budget) : sanitize(value, budget);
     } else if (Array.isArray(current) && Array.isArray(value)) {
       charge(budget, current.length + value.length);
       merged[key] = [...current, ...value];

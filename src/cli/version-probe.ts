@@ -50,6 +50,19 @@ function pathDirs(env: NodeJS.ProcessEnv): string[] {
   return raw.split(path.delimiter).filter((dir) => dir.trim() !== "" && path.isAbsolute(dir));
 }
 
+/**
+ * The probe's environment, with PATH reduced to its absolute entries: npm's
+ * `openclaw` bin starts with `#!/usr/bin/env node`, and `env` would otherwise
+ * search the current directory for `node` too.
+ */
+function probeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env };
+  for (const key of Object.keys(out)) {
+    if (key.toUpperCase() === "PATH") out[key] = (out[key] ?? "").split(path.delimiter).filter((dir) => dir.trim() !== "" && path.isAbsolute(dir)).join(path.delimiter);
+  }
+  return out;
+}
+
 function posixCommand(env: NodeJS.ProcessEnv): { command: string; args: string[] } | undefined {
   for (const dir of pathDirs(env)) {
     const candidate = path.join(dir, "openclaw");
@@ -123,35 +136,43 @@ export function probeOpenClawVersion(options: VersionProbeOptions): Promise<stri
     let bytes = 0;
     const chunks: Buffer[] = [];
     const child = spawn(target.command, target.args, {
-      env: options.env,
+      env: probeEnv(options.env),
       shell: false,
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
       // Its own process group, so a timeout can kill its descendants too.
       detached: posix,
     });
+    const running = () => child.exitCode === null && child.signalCode === null;
     const finish = (value: string | undefined) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       let treeKilled: Promise<void> = Promise.resolve();
-      if (value === undefined && child.pid !== undefined) {
+      if (child.pid !== undefined) {
         if (posix) {
+          // The probe's own process group: whatever it started ends with it,
+          // whether it succeeded or not. The group id cannot be reused while
+          // any member is alive.
           try {
             process.kill(-child.pid, "SIGKILL");
           } catch {
             // The group is already gone.
           }
-        } else if (child.exitCode === null && child.signalCode === null) {
-          // Only while it still runs: an exited child's PID may already be reused.
+        } else if (value === undefined && running()) {
+          // taskkill /T must find the parent alive to walk its tree, so it runs
+          // first; while the child runs, its PID cannot have been reused.
+          // After a clean exit nothing is killed: the PID may be reused.
           treeKilled = killWindowsTree(child.pid, options.env);
         }
       }
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-      child.stdout?.destroy();
-      // A descendant holding the pipe open must not keep nova-guard running.
-      child.unref();
-      void treeKilled.then(() => resolve(value));
+      void treeKilled.then(() => {
+        if (running()) child.kill("SIGKILL");
+        child.stdout?.destroy();
+        // A descendant holding the pipe open must not keep nova-guard running.
+        child.unref();
+        resolve(value);
+      });
     };
     const timer = setTimeout(() => finish(undefined), options.timeoutMs ?? defaultTimeoutMs);
     child.on("error", () => finish(undefined));

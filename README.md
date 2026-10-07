@@ -76,8 +76,8 @@ node dist/cli.js check        # or: npx nova-guard check, once published
 `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `OPENCLAW_WORKSPACE_DIR`,
 `OPENCLAW_PROFILE`, `OPENCLAW_INCLUDE_ROOTS`, else `~/.openclaw`), reads the
 config and its `$include` files, runs `openclaw --version` (no shell, only
-from absolute `PATH` entries, killed with anything it started after 10
-seconds), runs the four checks, and prints the report card. nova-guard makes no
+from absolute `PATH` entries and with only those in its `PATH`, at most 10
+seconds, then killed with anything it started), runs the four checks, and prints the report card. nova-guard makes no
 network calls and writes nothing; `openclaw --version` is OpenClaw's own code.
 Anything it cannot verify (no OpenClaw state directory, a config or include
 OpenClaw would reject, no version output) is reported as unknown, never as
