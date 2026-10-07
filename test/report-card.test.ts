@@ -60,12 +60,25 @@ function input(overrides: Partial<ReportCardInput> = {}): ReportCardInput {
   };
 }
 
+/** Terminal columns: East Asian wide characters and emoji take two. */
+function columns(line: string): number {
+  let width = 0;
+  for (const char of line) {
+    width += /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]|\p{Extended_Pictographic}/u.test(char)
+      ? 2
+      : /\p{Mn}|\p{Me}|\u200d/u.test(char)
+        ? 0
+        : 1;
+  }
+  return width;
+}
+
 function assertFitsOnePage(card: string) {
   const lines = card.split("\n");
   assert.ok(lines.length <= reportCardPageLines, `lines: ${lines.length}`);
   // The waitlist URL is printed whole so it stays usable; every other line fits.
   for (const line of lines) {
-    if (line !== waitlistUrl) assert.ok([...line].length <= reportCardWidth, `too wide: ${line}`);
+    if (line !== waitlistUrl) assert.ok(columns(line) <= reportCardWidth, `too wide: ${line}`);
   }
 }
 
@@ -171,10 +184,10 @@ test("risky skills are reported by root, file kind, rule, and line, never by ski
       skills: {
         grade: "critical",
         findings: [
-          { ruleId: "shell-pipe-to-shell", severity: "critical", root: managedSkills, skillDir, file: path.join(skillDir, "SKILL.md"), line: 6 },
-          { ruleId: "dangerous-exec", severity: "critical", root: managedSkills, skillDir, file: path.join(skillDir, "lib", "letmein.js"), line: 4 },
-          { ruleId: "dangerous-exec", severity: "critical", root: managedSkills, skillDir, file: path.join(skillDir, "lib", "letmein.js"), line: 9 },
-          { ruleId: "suspicious-network", severity: "warn", root: managedSkills, skillDir, file: path.join(skillDir, "net.ts"), line: 1 },
+          { ruleId: "shell-pipe-to-shell", severity: "critical", root: managedSkills, rootKind: "managed", skillDir, file: path.join(skillDir, "SKILL.md"), line: 6 },
+          { ruleId: "dangerous-exec", severity: "critical", root: managedSkills, rootKind: "managed", skillDir, file: path.join(skillDir, "lib", "letmein.js"), line: 4 },
+          { ruleId: "dangerous-exec", severity: "critical", root: managedSkills, rootKind: "managed", skillDir, file: path.join(skillDir, "lib", "letmein.js"), line: 9 },
+          { ruleId: "suspicious-network", severity: "warn", root: managedSkills, rootKind: "managed", skillDir, file: path.join(skillDir, "net.ts"), line: 1 },
         ],
         unknown: [],
         skills: 1,
@@ -184,10 +197,9 @@ test("risky skills are reported by root, file kind, rule, and line, never by ski
   );
   assert.match(card, /^Overall: CRITICAL$/m);
   assert.ok(!card.includes("letmein"), card);
-  const root = ["~", ".openclaw", "skills", "*"].join(path.sep);
-  assert.ok(card.includes(`skill ${root}: SKILL.md line 6`), card);
-  assert.ok(card.includes(`skill ${root}: .js file line 4 (+1 more)`), card);
-  assert.ok(card.includes(`skill ${root}: .ts file line 1`), card);
+  assert.ok(card.includes("skill 1 in the managed skills folder: SKILL.md line 6"), card);
+  assert.ok(card.includes("skill 1 in the managed skills folder: .js file line 4 (+1 more)"), card);
+  assert.ok(card.includes("skill 1 in the managed skills folder: .ts file line 1"), card);
   assert.match(card, /shell-pipe-to-shell/);
   assert.match(card, /Fix: .*pipe/i);
 });
@@ -281,4 +293,174 @@ test("rendering is deterministic and control characters are stripped", () => {
   const first = renderReportCard(value);
   assert.equal(renderReportCard(structuredClone(value)), first);
   assert.ok(!/[\u0000-\u0008\u000b-\u001f\u007f‮]/.test(first));
+});
+
+const skillHit = (overrides: Partial<RiskySkillsResult["findings"][number]>): RiskySkillsResult["findings"][number] => ({
+  ruleId: "shell-pipe-to-shell",
+  severity: "critical",
+  root: managedSkills,
+  rootKind: "managed",
+  skillDir: path.join(managedSkills, "a"),
+  file: path.join(managedSkills, "a", "SKILL.md"),
+  line: 1,
+  ...overrides,
+});
+const skillsWith = (findings: RiskySkillsResult["findings"]): RiskySkillsResult => ({
+  grade: "critical",
+  findings,
+  unknown: [],
+  skills: findings.length,
+  summary: "risky",
+});
+
+test("skill roots print by kind, never by their configured or agent-named path", () => {
+  const workspace = path.join(stateDir, "workspace-letmein-client", "skills");
+  const extra = path.resolve(path.sep, "srv", "letmein-private", "skills");
+  const card = renderReportCard(
+    input({
+      skills: skillsWith([
+        skillHit({ root: workspace, rootKind: "workspace", skillDir: path.join(workspace, "x"), file: path.join(workspace, "x", "SKILL.md") }),
+        skillHit({ root: extra, rootKind: "extra", skillDir: path.join(extra, "y"), file: path.join(extra, "y", "SKILL.md") }),
+        skillHit({ root: path.join(homeDir, ".agents", "skills"), rootKind: "personal", skillDir: path.join(homeDir, ".agents", "skills", "z"), file: path.join(homeDir, ".agents", "skills", "z", "SKILL.md") }),
+      ]),
+    }),
+  );
+  assert.ok(!card.includes("letmein"), card);
+  assert.ok(card.includes("in a workspace skills folder: SKILL.md line 1"), card);
+  assert.ok(card.includes("in a skills.load.extraDirs folder: SKILL.md line 1"), card);
+  assert.ok(card.includes(`in ${["~", ".agents", "skills"].join(path.sep)}: SKILL.md line 1`), card);
+});
+
+test("different skills under one root are numbered apart, and omitted matches are counted", () => {
+  const card = renderReportCard(
+    input({
+      skills: skillsWith([
+        skillHit({ skillDir: path.join(managedSkills, "a"), file: path.join(managedSkills, "a", "SKILL.md") }),
+        skillHit({ skillDir: path.join(managedSkills, "b"), file: path.join(managedSkills, "b", "SKILL.md") }),
+        ...Array.from({ length: 32 }, (_, i) =>
+          skillHit({ ruleId: "dangerous-exec", skillDir: path.join(managedSkills, "b"), file: path.join(managedSkills, "b", "x.js"), line: i + 1 }),
+        ),
+        skillHit({ ruleId: "dangerous-exec-truncated", skillDir: path.join(managedSkills, "b"), file: path.join(managedSkills, "b", "x.js"), line: 40, omitted: 8 }),
+      ]),
+    }),
+  );
+  assert.ok(card.includes("skill 1 in the managed skills folder: SKILL.md line 1"), card);
+  assert.ok(card.includes("skill 2 in the managed skills folder: SKILL.md line 1"), card);
+  assert.ok(card.includes("skill 2 in the managed skills folder: .js file line 1 (+39 more)"), card);
+});
+
+test("home, OS home, and state directories are shortened even for ..-prefixed names", () => {
+  const osHomeDir = path.resolve(path.sep, "Users", "letmein-os");
+  const outsideState = path.resolve(path.sep, "srv", "letmein-state");
+  const card = renderReportCard(
+    input({
+      osHomeDir,
+      stateDir: outsideState,
+      secrets: {
+        ...secretsPass,
+        grade: "warning",
+        findings: [
+          { kind: "plaintext", file: path.join(homeDir, "..hidden", "openclaw.json"), key: "a" },
+          { kind: "plaintext", file: path.join(outsideState, "agents", "..acme", "agent", "models.json"), key: "b" },
+          { kind: "plaintext", file: path.join(osHomeDir, ".config", "openclaw", "gateway.env"), line: 1, key: "C" },
+        ],
+        summary: "3 plaintext secrets found in 3 files.",
+      },
+    }),
+  );
+  assert.ok(!card.includes(homeDir) && !card.includes("letmein") && !card.includes("acme"), card);
+  assert.ok(card.includes(["~", "..hidden", "openclaw.json"].join(path.sep)), card);
+  assert.ok(card.includes(["<state>", "agents", "*", "agent", "models.json"].join(path.sep)), card);
+  assert.ok(card.includes(["~", ".config", "openclaw", "gateway.env"].join(path.sep)), card);
+});
+
+test("wide characters are measured in columns, so lines still fit", () => {
+  const wide = path.join(homeDir, ...Array.from({ length: 6 }, () => "设置文件目录名称"), "openclaw.json");
+  const card = renderReportCard(
+    input({
+      secrets: {
+        ...secretsPass,
+        grade: "unknown",
+        findings: [{ kind: "plaintext", file: wide, key: "gateway.auth.token" }],
+        unreadable: [wide],
+        summary: "x",
+      },
+    }),
+  );
+  assertFitsOnePage(card);
+  assert.ok(card.includes("openclaw.json"));
+});
+
+test("gateway fixes match the exposure they describe", () => {
+  const fixFor = (summary: string, grade: "warning" | "critical") =>
+    renderReportCard(input({ gateway: { grade, bind: "x", auth: "token", summary } }))
+      .split("\n")
+      .filter((line) => line.startsWith("     Fix: ") || line.startsWith("          "))
+      .join(" ");
+  for (const summary of [
+    "Public internet exposure via Tailscale Funnel.",
+    "Public internet exposure via Tailscale Funnel; password is not verifiable.",
+  ]) {
+    const fix = fixFor(summary, "warning");
+    assert.match(fix, /Serve/, summary);
+    assert.doesNotMatch(fix, /bind (the gateway )?to loopback/, summary);
+  }
+  const serve = fixFor("Gateway is reachable from the tailnet via Tailscale Serve.", "warning");
+  assert.match(serve, /tailnet/);
+  assert.doesNotMatch(serve, /bind (the gateway )?to loopback/);
+  const combined = fixFor(
+    "Public Tailscale Funnel exposure has a non-password auth mode. Also: Gateway is authenticated but exposed beyond loopback.",
+    "critical",
+  );
+  assert.match(combined, /password/);
+  assert.match(combined, /loopback/);
+});
+
+test("one check's unreadable files cannot crowd out another check's unknowns", () => {
+  const unreadable = Array.from({ length: 13 }, (_, i) => path.join(stateDir, `inc${i}.json5`));
+  const card = renderReportCard(
+    input({
+      secrets: { ...secretsPass, grade: "unknown", unreadable, summary: "x" },
+      skills: { ...skillsPass, grade: "unknown", unknown: [{ path: "scan", reason: "time-limit" }], summary: "x" },
+    }),
+  );
+  assert.ok(card.includes("Plaintext secrets: could not read 13 files"), card);
+  assert.ok(card.includes("Risky skills: 1 location (1 time limit)"), card);
+  assertFitsOnePage(card);
+});
+
+test("a long key never pushes the file location off the line", () => {
+  const card = renderReportCard(
+    input({
+      secrets: {
+        ...secretsPass,
+        grade: "warning",
+        findings: [{ kind: "plaintext", file: configPath, key: `${"*.".repeat(60)}token` }],
+        summary: "1",
+      },
+    }),
+  );
+  assertFitsOnePage(card);
+  assert.ok(card.includes(`in ${["~", ".openclaw", "openclaw.json"].join(path.sep)}`), card);
+  assert.ok(card.includes("*.token"), card);
+});
+
+test("version and secret fixes fit the evidence", () => {
+  const noIds = renderReportCard(
+    input({ version: { grade: "warning", version: "2026.1.1", advisories: [], summary: "OpenClaw 2026.1.1 matches 1 bundled advisory." } }),
+  );
+  assert.ok(noIds.includes("Fix: Upgrade OpenClaw to the latest release."), noIds);
+  assert.ok(!noIds.includes("affected by"));
+  const include = renderReportCard(
+    input({
+      secrets: {
+        ...secretsPass,
+        grade: "warning",
+        findings: [{ kind: "plaintext", file: path.join(stateDir, "secrets.env"), key: "gateway.auth.token" }],
+        summary: "1",
+      },
+    }),
+  );
+  assert.match(include, /SecretRef/);
+  assert.doesNotMatch(include, /chmod/);
 });

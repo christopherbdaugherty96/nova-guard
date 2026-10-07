@@ -687,3 +687,34 @@ test("each finding names the skill root it was discovered under", () => {
     );
   });
 });
+
+test("findings carry their root's kind, and truncated hits their omitted count", () => {
+  fixture((root, at) => {
+    const extra = path.join(root, "extra");
+    const ws = path.join(at.stateDir, "workspace");
+    skill(path.join(at.stateDir, "skills", "m"), pipeToShell);
+    skill(path.join(at.homeDir, ".agents", "skills", "p"), pipeToShell);
+    skill(path.join(ws, "skills", "w"), pipeToShell);
+    skill(path.join(ws, ".agents", "skills", "a"), pipeToShell);
+    skill(path.join(extra, "e"), pipeToShell);
+    skill(path.join(at.stateDir, "agents", "main", "agent", "workshop-skills", "k"), pipeToShell);
+    const dense = [
+      'import { spawn } from "node:child_process";',
+      ...Array.from({ length: 40 }, (_, i) => `spawn("node", ["${i}.js"]);`),
+    ].join("\n");
+    skill(path.join(at.stateDir, "skills", "d"), undefined, { "x.js": dense });
+    const result = assessRiskySkills(at, ok({ skills: { load: { extraDirs: [extra] } } }));
+    const kinds = new Map(result.findings.map((finding) => [path.basename(finding.skillDir), finding.rootKind]));
+    assert.deepEqual(Object.fromEntries([...kinds].sort()), {
+      a: "workspace-agents",
+      d: "managed",
+      e: "extra",
+      k: "workshop",
+      m: "managed",
+      p: "personal",
+      w: "workspace",
+    });
+    const truncated = result.findings.find((finding) => finding.ruleId === "dangerous-exec-truncated");
+    assert.equal(truncated?.omitted, 8);
+  });
+});
