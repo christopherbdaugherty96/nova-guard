@@ -284,7 +284,7 @@ export function renderReportCard(input: ReportCardInput): string {
     `Overall: ${overall.toUpperCase()}`,
     fit(`nova-guard ${sanitize(input.toolVersion)} · advisory data as of ${sanitize(input.advisoryDataDate)}`),
     ...wrap(
-      "Safer, not safe: a clean report does not guarantee that the agent, host, plugins, skills, model, or network are secure.",
+      "Safer, not safe: PASS means the inspected security controls passed, not that the whole OpenClaw config is valid or that the agent, host, plugins, skills, model, or network are secure.",
       "",
     ),
     "",

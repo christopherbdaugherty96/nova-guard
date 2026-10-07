@@ -3,8 +3,9 @@
 `nova-guard check` is a free, open-source, read-only local scanner for people
 running self-hosted AI agents. OpenClaw is the first supported target.
 
-> Safer, not safe. A clean report is not a guarantee that an agent, host,
-> plugin, skill, model, or network is secure.
+> Safer, not safe. PASS means the inspected security controls passed, not
+> that the whole OpenClaw configuration is valid. A clean report is not a
+> guarantee that an agent, host, plugin, skill, model, or network is secure.
 
 ## Product contract
 
@@ -82,8 +83,9 @@ network calls and writes nothing; `openclaw --version` is OpenClaw's own code.
 Anything it cannot verify (no OpenClaw state directory, a config or include
 OpenClaw would reject in the fields the checks read, no version output) is
 reported as unknown, never as pass. It does not reimplement OpenClaw's whole
-config schema, so an unknown key, an invalid value in another field, or a
-cross-field rule OpenClaw enforces is not detected. The gateway grade reads the config only: an omitted `gateway.bind` is
+config schema: every field that can affect path discovery, the four checks,
+or their grades is validated, but an unknown key, an invalid value in another
+field, or a cross-field rule OpenClaw enforces is not detected. The gateway grade reads the config only: an omitted `gateway.bind` is
 unknown unless nova-guard itself runs in a container, and a `--bind` flag
 passed to the gateway (as OpenClaw's Docker setup does) is not visible to it.
 The exit code is 0 whenever a card is printed and 2 for a usage error.
