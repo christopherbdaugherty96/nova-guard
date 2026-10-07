@@ -674,3 +674,15 @@ test("the whole assessment has a time limit; past it the result is unknown, neve
     assert.ok(clock <= 8000, `clock: ${clock}`);
   });
 });
+
+test("each finding names the skill root it was discovered under", () => {
+  fixture((_root, at) => {
+    const managed = path.join(at.stateDir, "skills");
+    skill(path.join(managed, "group", "tool"), pipeToShell);
+    const result = assessRiskySkills(at, none);
+    assert.deepEqual(
+      result.findings.map((finding) => finding.root),
+      [managed],
+    );
+  });
+});
