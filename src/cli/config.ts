@@ -94,7 +94,14 @@ function deepMerge(base: unknown, override: unknown, budget: MergeBudget): unkno
 function hasLoadableShape(config: unknown): boolean {
   if (!isPlainObject(config)) return false;
   const section = (value: unknown) => value === undefined || isPlainObject(value);
-  const list = (value: unknown) => value === undefined || Array.isArray(value);
+  const text = (value: unknown) => value === undefined || typeof value === "string";
+  // A list of strings: OpenClaw's schema rejects any other element, and the
+  // checks would otherwise silently skip it.
+  const strings = (value: unknown) =>
+    value === undefined || (Array.isArray(value) && value.every((item) => typeof item === "string"));
+  // An agent entry: an object whose id, workspace, and agentDir are strings.
+  const agent = (value: unknown) =>
+    isPlainObject(value) && text(value.id) && text(value.workspace) && text(value.agentDir);
   const gateway = config.gateway;
   const skills = config.skills;
   const agents = config.agents;
@@ -105,13 +112,13 @@ function hasLoadableShape(config: unknown): boolean {
     section(skills) &&
     (!isPlainObject(gateway) || (section(gateway.auth) && section(gateway.tailscale))) &&
     (!isPlainObject(agents) ||
-      (list(agents.list) &&
-        (!Array.isArray(agents.list) || agents.list.every(isPlainObject)) &&
+      ((agents.list === undefined || (Array.isArray(agents.list) && agents.list.every(agent))) &&
         section(agents.entries) &&
-        (!isPlainObject(agents.entries) || Object.values(agents.entries).every(isPlainObject)) &&
-        section(agents.defaults))) &&
+        (!isPlainObject(agents.entries) || Object.values(agents.entries).every(agent)) &&
+        section(agents.defaults) &&
+        (!isPlainObject(agents.defaults) || text(agents.defaults.workspace)))) &&
     section(load) &&
-    (!isPlainObject(load) || (list(load.extraDirs) && list(load.allowSymlinkTargets)))
+    (!isPlainObject(load) || (strings(load.extraDirs) && strings(load.allowSymlinkTargets)))
   );
 }
 

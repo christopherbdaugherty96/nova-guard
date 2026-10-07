@@ -60,7 +60,11 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   is unknown. Command-line `--bind` flags are never visible to a config scan.
 - The merged config must be an object, and `gateway`, `gateway.auth`,
   `gateway.tailscale`, `agents`, `skills`, and `skills.load` must be objects
-  when present; otherwise OpenClaw refuses it and so does the check command.
+  when present; `agents.list` an array of objects and `agents.entries` values
+  objects, with string `id`, `workspace`, and `agentDir`;
+  `agents.defaults.workspace` a string; `skills.load.extraDirs` and
+  `allowSymlinkTargets` arrays of strings. Otherwise OpenClaw refuses it and so
+  does the check command.
   Hardlinked include files are refused, as OpenClaw's guarded open does, and
   include merges that would copy more than 2,000,000 entries are treated as
   unreadable. Outside include merges only `__proto__` is dropped.
