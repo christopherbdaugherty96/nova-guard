@@ -46,6 +46,7 @@ test("default locations follow OpenClaw: ~/.openclaw, its openclaw.json, and wor
     stateDir: path.join(home, ".openclaw"),
     configPath: path.join(home, ".openclaw", "openclaw.json"),
     workspaceDir: path.join(home, ".openclaw", "workspace"),
+    defaultStateDir: true,
     includeRoots: [],
   });
 });
@@ -483,7 +484,14 @@ test("a timed-out openclaw is killed with its descendants", posixOnly, async () 
     assert.equal(await probeOpenClawVersion({ env: pathEnv(bin), timeoutMs: 1500 }), undefined);
     await new Promise((resolve) => setTimeout(resolve, 300));
     const pid = Number(readFileSync(marker, "utf8"));
-    assert.throws(() => process.kill(pid, 0), "the descendant is gone");
+    // Gone, or a zombie awaiting reaping by init: either way no longer running.
+    let state = "";
+    try {
+      state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
+    } catch {
+      state = "";
+    }
+    assert.ok(state === "" || state.startsWith("Z"), `descendant still running: ${state}`);
   });
 });
 

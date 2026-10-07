@@ -15,7 +15,10 @@ export interface OpenClawLocations {
   osHomeDir: string;
   stateDir: string;
   configPath: string;
-  workspaceDir: string;
+  /** Undefined when OPENCLAW_PROFILE is invalid: OpenClaw then refuses to resolve it. */
+  workspaceDir: string | undefined;
+  /** Whether the state directory is OpenClaw's default (~/.openclaw). */
+  defaultStateDir: boolean;
   includeRoots: string[];
 }
 
@@ -56,15 +59,15 @@ export function resolveOpenClawLocations(
   const configOverride = env.OPENCLAW_CONFIG_PATH?.trim();
   const configPath = configOverride ? userPath(configOverride) : path.join(stateDir, "openclaw.json");
 
-  let workspaceDir: string;
+  let workspaceDir: string | undefined;
   const workspaceOverride = env.OPENCLAW_WORKSPACE_DIR?.trim();
   const profile = env.OPENCLAW_PROFILE?.trim();
   if (workspaceOverride) {
     workspaceDir = path.resolve(workspaceOverride);
   } else if (stateOverride) {
     workspaceDir = path.join(stateDir, "workspace");
-  } else if (profile && profile.toLowerCase() !== "default" && profileName.test(profile)) {
-    workspaceDir = path.join(homeDir, `.openclaw-${profile}`, "workspace");
+  } else if (profile && profile.toLowerCase() !== "default") {
+    workspaceDir = profileName.test(profile) ? path.join(homeDir, `.openclaw-${profile}`, "workspace") : undefined;
   } else {
     workspaceDir = path.join(homeDir, ".openclaw", "workspace");
   }
@@ -76,5 +79,6 @@ export function resolveOpenClawLocations(
     if (!includeRoots.includes(resolved)) includeRoots.push(resolved);
   }
 
-  return { homeDir, osHomeDir, stateDir, configPath, workspaceDir, includeRoots };
+  const defaultStateDir = stateDir === path.join(homeDir, ".openclaw");
+  return { homeDir, osHomeDir, stateDir, configPath, workspaceDir, defaultStateDir, includeRoots };
 }

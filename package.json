@@ -6,6 +6,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "prepare": "npm run build",
     "build": "tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test",

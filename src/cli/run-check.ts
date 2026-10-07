@@ -89,18 +89,24 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
   } else {
     // Gateway credentials count as available only when one of the .env files
     // OpenClaw loads defines them; only their presence is checked.
+    // ~/.config/openclaw/gateway.env is loaded only with the default state dir
+    // (OpenClaw's resolveGlobalDotEnvPaths).
     const envFiles = [
       path.join(locations.stateDir, ".env"),
       path.join(path.dirname(locations.configPath), ".env"),
-      path.join(locations.homeDir, ".config", "openclaw", "gateway.env"),
+      ...(locations.defaultStateDir ? [path.join(locations.homeDir, ".config", "openclaw", "gateway.env")] : []),
     ];
     const defined = (name: string) =>
       envFiles.some((file) => {
         const read = nodeSecretFileReader.readText(file);
         return read.status === "ok" && (parseDotEnv(read.text).get(name)?.value.trim() ?? "") !== "";
       });
+    // Detection describes the host nova-guard runs on. Inside a container that
+    // settles it; outside, the gateway may still run in one (OpenClaw's Docker
+    // setup mounts the host's state), so an omitted bind stays unknown.
+    const inContainer = (deps.isContainer ?? (() => detectContainer(deps.env, nodeFiles)))();
     gateway = assessGatewayExposure(config.status === "ok" ? (config.config as object) : {}, {
-      isContainer: (deps.isContainer ?? (() => detectContainer(deps.env, nodeFiles)))(),
+      ...(inContainer ? { isContainer: true } : {}),
       ...(defined("OPENCLAW_GATEWAY_TOKEN") ? { gatewayTokenAvailable: true } : {}),
       ...(defined("OPENCLAW_GATEWAY_PASSWORD") ? { gatewayPasswordAvailable: true } : {}),
     });
@@ -112,15 +118,23 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     homeDir: locations.homeDir,
     includeRoots: locations.includeRoots,
   });
-  const skills = assessRiskySkills(
+  let skills = assessRiskySkills(
     {
       stateDir: locations.stateDir,
       homeDir: locations.homeDir,
       osHomeDir: locations.osHomeDir,
-      workspaceDir: locations.workspaceDir,
+      ...(locations.workspaceDir === undefined ? {} : { workspaceDir: locations.workspaceDir }),
     },
     config,
   );
+  if (locations.workspaceDir === undefined) {
+    // OpenClaw refuses an invalid OPENCLAW_PROFILE, so its workspace is unknown.
+    skills = {
+      ...skills,
+      grade: skills.grade === "pass" ? "unknown" : skills.grade,
+      unknown: [...skills.unknown, { path: "OPENCLAW_PROFILE workspace", reason: "unreadable" }],
+    };
+  }
 
   return renderReportCard({
     homeDir: locations.homeDir,

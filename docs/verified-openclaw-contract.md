@@ -50,11 +50,26 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
 - Container detection (for the gateway's default bind): Fly.io machine
   variables, `/.dockerenv`, `/run/.containerenv`, `/var/run/.containerenv`, or
   a container cgroup for PID 1, evaluated on the host where nova-guard runs.
+  A detected container settles an omitted bind (`auto`); outside one the
+  gateway may still run in a container (OpenClaw's `docker-compose.yml`
+  mounts the host's `~/.openclaw` and passes `--bind lan`), so an omitted bind
+  is unknown. Command-line `--bind` flags are never visible to a config scan.
+- The merged config must be an object, and `gateway`, `gateway.auth`,
+  `gateway.tailscale`, `agents`, `skills`, and `skills.load` must be objects
+  when present; otherwise OpenClaw refuses it and so does the check command.
+  Hardlinked include files are refused, as OpenClaw's guarded open does, and
+  include merges that would copy more than 2,000,000 entries are treated as
+  unreadable. Outside include merges only `__proto__` is dropped.
 - Gateway credentials count as available only when `OPENCLAW_GATEWAY_TOKEN` or
-  `OPENCLAW_GATEWAY_PASSWORD` is set in one of the `.env` files OpenClaw loads;
+  `OPENCLAW_GATEWAY_PASSWORD` is set in one of the `.env` files OpenClaw loads
+  (`~/.config/openclaw/gateway.env` only with the default state directory);
   only presence is checked, never the value.
-- `openclaw --version` is run from `PATH` without a shell, with standard output
-  capped at 4 KiB and a 10-second hard timeout; on Windows, npm's
+- An invalid `OPENCLAW_PROFILE` makes OpenClaw refuse to resolve the default
+  workspace, so risky skills are then unknown.
+- `openclaw --version` is run without a shell from the first absolute `PATH`
+  entry holding an executable `openclaw` (empty or relative entries would mean
+  the current directory), with standard output capped at 4 KiB and a 10-second
+  hard timeout that kills its whole process group on POSIX; on Windows, npm's
   `openclaw.cmd` shim is resolved to its script, which is run with Node.
 
 ## Gateway

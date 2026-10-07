@@ -75,18 +75,23 @@ node dist/cli.js check        # or: npx nova-guard check, once published
 `nova-guard check` finds OpenClaw the way OpenClaw does (`OPENCLAW_HOME`,
 `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `OPENCLAW_WORKSPACE_DIR`,
 `OPENCLAW_PROFILE`, `OPENCLAW_INCLUDE_ROOTS`, else `~/.openclaw`), reads the
-config and its `$include` files, runs `openclaw --version` (no shell, killed
-after 10 seconds), runs the four checks, and prints the report card. It makes
-no network calls and writes nothing. Anything it cannot verify (no OpenClaw
-state directory, an unreadable config or include, no version output) is
-reported as unknown, never as pass. The exit code is 0 whenever a card is
-printed and 2 for a usage error.
+config and its `$include` files, runs `openclaw --version` (no shell, only
+from absolute `PATH` entries, killed with anything it started after 10
+seconds), runs the four checks, and prints the report card. nova-guard makes no
+network calls and writes nothing; `openclaw --version` is OpenClaw's own code.
+Anything it cannot verify (no OpenClaw state directory, a config or include
+OpenClaw would reject, no version output) is reported as unknown, never as
+pass. The gateway grade reads the config only: an omitted `gateway.bind` is
+unknown unless nova-guard itself runs in a container, and a `--bind` flag
+passed to the gateway (as OpenClaw's Docker setup does) is not visible to it.
+The exit code is 0 whenever a card is printed and 2 for a usage error.
 
 ## Status
 
 Early: the four v0.1 checks and the report card run locally; spend is not
-checked yet. `--profile` is not supported; set `OPENCLAW_STATE_DIR` and
-`OPENCLAW_CONFIG_PATH` (or `OPENCLAW_PROFILE` for the workspace) instead.
+checked yet. `--profile` is not supported: OpenClaw's `--profile` sets
+`OPENCLAW_STATE_DIR` and `OPENCLAW_CONFIG_PATH`, so set those two (as
+`~/.openclaw-<profile>` and its `openclaw.json`) to scan a profile.
 
 ## License
 

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -8,8 +8,13 @@ import path from "node:path";
  * non-zero exit, oversized output, or no exit before the hard timeout (the
  * process is killed and partial output is discarded). No shell is ever used.
  *
- * On Windows, npm installs `openclaw.cmd`, which only a shell can run, so its
- * script is read from npm's shim and run directly with this Node binary.
+ * Only absolute PATH entries are searched (an empty or relative entry would
+ * mean the current directory), and the absolute path found is what runs. On
+ * POSIX the probe gets its own process group, so a timeout kills everything it
+ * started. On Windows, npm installs `openclaw.cmd`, which only a shell can
+ * run, so its script is read from npm's shim and run directly with this Node
+ * binary. `openclaw --version` is OpenClaw's own code; nova-guard writes
+ * nothing, but cannot vouch for what OpenClaw does when asked its version.
  */
 
 const defaultTimeoutMs = 10_000;
@@ -44,6 +49,20 @@ function pathDirs(env: NodeJS.ProcessEnv): string[] {
   return raw.split(path.delimiter).filter((dir) => dir.trim() !== "" && path.isAbsolute(dir));
 }
 
+function posixCommand(env: NodeJS.ProcessEnv): { command: string; args: string[] } | undefined {
+  for (const dir of pathDirs(env)) {
+    const candidate = path.join(dir, "openclaw");
+    if (!isFile(candidate)) continue;
+    try {
+      accessSync(candidate, constants.X_OK);
+    } catch {
+      continue;
+    }
+    return { command: candidate, args: ["--version"] };
+  }
+  return undefined;
+}
+
 function windowsCommand(env: NodeJS.ProcessEnv): { command: string; args: string[] } | undefined {
   for (const dir of pathDirs(env)) {
     const exe = path.join(dir, "openclaw.exe");
@@ -65,8 +84,8 @@ function windowsCommand(env: NodeJS.ProcessEnv): { command: string; args: string
 
 export function probeOpenClawVersion(options: VersionProbeOptions): Promise<string | undefined> {
   const platform = options.platform ?? process.platform;
-  const target =
-    platform === "win32" ? windowsCommand(options.env) : { command: "openclaw", args: ["--version"] };
+  const posix = platform !== "win32";
+  const target = posix ? posixCommand(options.env) : windowsCommand(options.env);
   if (!target) return Promise.resolve(undefined);
 
   return new Promise((resolve) => {
@@ -78,11 +97,20 @@ export function probeOpenClawVersion(options: VersionProbeOptions): Promise<stri
       shell: false,
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
+      // Its own process group, so a timeout can kill its descendants too.
+      detached: posix,
     });
     const finish = (value: string | undefined) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (value === undefined && posix && child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // The group is already gone.
+        }
+      }
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       child.stdout?.destroy();
       // A descendant holding the pipe open must not keep nova-guard running.
