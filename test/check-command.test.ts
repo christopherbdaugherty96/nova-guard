@@ -851,3 +851,11 @@ test("an absent state directory keeps findings from an explicit config", async (
     assert.ok(!result.stdout.includes("letmein"), result.stdout);
   });
 });
+
+test("a file SecretRef id with a ${VAR} template is unverifiable: OpenClaw substitutes it before validating", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    write(configPath, '{ "gateway": { "bind": "loopback", "auth": { "mode": "token", "token": { "source": "file", "provider": "mounted", "id": "/${TOKEN_KEY}" } } } }');
+    assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" });
+  });
+});
