@@ -90,6 +90,12 @@ test("an all-pass scan grades PASS on one printable page with the waitlist link"
   assertFitsOnePage(card);
 });
 
+test("the card says PASS covers only the inspected controls, not the whole OpenClaw config", () => {
+  const card = renderReportCard(input()).replace(/\s+/g, " ");
+  assert.match(card, /PASS means the inspected security controls passed/);
+  assert.match(card, /not that the whole OpenClaw config is valid/);
+});
+
 test("spend is shown as not checked and does not affect the overall grade", () => {
   const card = renderReportCard(input());
   assert.match(card, /^ *Spend .*not checked/im);
