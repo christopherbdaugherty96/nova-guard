@@ -569,3 +569,33 @@ test("labels and continuation lines align when there are ten or more findings", 
     assert.equal(next.length - next.trimStart().length, labelColumn, `${lines[index]}\n${next}`);
   }
 });
+
+test("the most specific base wins, so an agent directory never exposes a narrower private name", () => {
+  const outside = path.resolve(path.sep, "srv", "x");
+  const secretIn = (file: string): PlaintextSecretsResult => ({
+    grade: "warning",
+    findings: [{ kind: "plaintext", file, key: "OPENAI_API_KEY" }],
+    unreadable: [],
+    scanned: [file],
+    summary: "Plaintext secrets found.",
+  });
+  const cases: [Partial<ReportCardInput>, string, string][] = [
+    // Nested agent directories: the inner one is used.
+    [{ agentDirs: [path.join(homeDir, "teamdirs"), path.join(homeDir, "teamdirs", "acme-secret-client")] },
+      path.join(homeDir, "teamdirs", "acme-secret-client", "models.json"), ["<agent-dir>", "models.json"].join(path.sep)],
+    // An agent directory containing the config directory: <config> is used.
+    [{ agentDirs: [outside], configPath: path.join(outside, "clients", "acme-corp", "openclaw.json") },
+      path.join(outside, "clients", "acme-corp", ".env"), ["<config>", ".env"].join(path.sep)],
+    // An agent directory containing the state directory: <state> is used.
+    [{ agentDirs: [outside], stateDir: path.join(outside, "acme-state") },
+      path.join(outside, "acme-state", ".env"), ["<state>", ".env"].join(path.sep)],
+    // An agent directory inside home: <agent-dir> is used, not ~/<name>.
+    [{ agentDirs: [path.join(homeDir, "acme-agent")] },
+      path.join(homeDir, "acme-agent", "models.json"), ["<agent-dir>", "models.json"].join(path.sep)],
+  ];
+  for (const [overrides, file, shown] of cases) {
+    const card = renderReportCard(input({ ...overrides, secrets: secretIn(file) }));
+    assert.ok(card.includes(`in ${shown}`), card);
+    assert.doesNotMatch(card, /acme/, card);
+  }
+});

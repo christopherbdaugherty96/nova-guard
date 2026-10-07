@@ -985,3 +985,20 @@ test("an agent roster OpenClaw rejects is unreadable; the rosters it accepts loa
     }
   });
 });
+
+test("models.json in a configured agent directory inside <state>/agents is scanned too", async () => {
+  await tempRoot((root) => {
+    const home = path.join(root, "home");
+    const state = path.join(home, ".openclaw");
+    const models = JSON.stringify({ providers: { openai: { apiKey: "sk-proj-letmein0123456789abcdefghij" } } });
+    for (const dir of [path.join(state, "agents", "ops"), path.join(state, "agents")]) {
+      rmSync(state, { recursive: true, force: true });
+      write(path.join(dir, "models.json"), models);
+      write(path.join(state, "openclaw.json"), `{ gateway: { bind: "loopback" }, agents: { entries: { main: { agentDir: ${JSON.stringify(dir)} } } } }`);
+      const result = runCli(["check"], { HOME: home, USERPROFILE: home, ...pathEnv(path.join(root, "nb")) });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, `${dir}: ${result.stdout}`);
+      assert.ok(!result.stdout.includes("letmein"), result.stdout);
+    }
+  });
+});
