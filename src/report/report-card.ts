@@ -37,7 +37,10 @@ export interface ReportCardInput {
   homeDir: string;
   /** The OS home, when it differs; also printed as "~". */
   osHomeDir?: string;
+  /** Printed as "<state>" when outside home. */
   stateDir: string;
+  /** The config file; its directory prints as "<config>" when outside home and state. */
+  configPath?: string;
   toolVersion: string;
   advisoryDataDate: string;
   /** A check that did not run is undefined and reported as not checked. */
@@ -54,24 +57,24 @@ interface Finding {
   label: string;
   /** A second line: `before`, a path shortened to fit, `suffix`, then `detail`. */
   location?: { before: string; path: string; suffix: string; detail: string };
+  /** A second line of fixed text, wrapped rather than shortened. */
+  note?: string;
   fix: string;
 }
 
-const findingIndent = " ".repeat(15);
 const fixIndent = " ".repeat(10);
 
 function sanitize(text: string): string {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "");
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
 }
 
-/** Terminal columns: East Asian wide characters and emoji take two, marks none. */
+/**
+ * Terminal columns, measured pessimistically: any non-ASCII character counts
+ * as two, the most any single character takes. Overcounting only shortens a
+ * line; undercounting a wide character would overflow the page.
+ */
 function charColumns(char: string): number {
-  if (/\p{Mn}|\p{Me}|‍/u.test(char)) return 0;
-  return /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3FFFD}]|\p{Extended_Pictographic}/u.test(
-    char,
-  )
-    ? 2
-    : 1;
+  return (char.codePointAt(0) ?? 0) < 0x80 ? 1 : 2;
 }
 
 function columns(text: string): number {
@@ -98,7 +101,7 @@ function tail(text: string, width: number): string {
 function fit(line: string): string {
   if (columns(line) <= reportCardWidth) return line;
   const indent = line.match(/^\s*/)?.[0] ?? "";
-  return `${indent}…${tail(line.slice(indent.length), reportCardWidth - indent.length - 1)}`;
+  return `${indent}…${tail(line.slice(indent.length), reportCardWidth - indent.length - columns("…"))}`;
 }
 
 /** Word-wraps text to the page width, indenting continuation lines. */
@@ -125,13 +128,13 @@ function wrap(text: string, indent: string, firstIndent = indent): string[] {
  * The location line. The path is shortened from the left so its suffix stays
  * whole; if the detail does not leave the path room, it moves to its own line.
  */
-function locationLines(location: NonNullable<Finding["location"]>): string[] {
+function locationLines(location: NonNullable<Finding["location"]>, findingIndent: string): string[] {
   const minimumPath = 24;
   const head = `${findingIndent}${location.before}`;
   const withPath = (after: string): string => {
     const room = reportCardWidth - columns(head) - columns(after);
     if (columns(location.path) <= room) return `${head}${location.path}${after}`;
-    return fit(`${head}…${tail(location.path, Math.max(room - 1, 0))}${after}`);
+    return fit(`${head}…${tail(location.path, Math.max(room - columns("…"), 0))}${after}`);
   };
   const oneLine = `${location.suffix}${location.detail}`;
   if (
@@ -140,8 +143,16 @@ function locationLines(location: NonNullable<Finding["location"]>): string[] {
   ) {
     return [withPath(oneLine)];
   }
+  // The detail ("key ...") keeps its label; a long value is shortened from the left.
   const detail = location.detail.replace(/^,\s*/, "");
-  return [withPath(location.suffix), fit(`${findingIndent}${detail}`)];
+  const [label, ...valueWords] = detail.split(" ");
+  const value = valueWords.join(" ");
+  const room = reportCardWidth - columns(`${findingIndent}${label} `) - columns("…");
+  const detailLine =
+    columns(`${findingIndent}${detail}`) <= reportCardWidth
+      ? `${findingIndent}${detail}`
+      : `${findingIndent}${label} …${tail(value, room)}`;
+  return [withPath(location.suffix), detailLine];
 }
 
 function isInside(base: string, candidate: string): boolean {
@@ -150,11 +161,18 @@ function isInside(base: string, candidate: string): boolean {
 }
 
 export function renderReportCard(input: ReportCardInput): string {
-  const homes = [input.homeDir, input.osHomeDir]
-    .filter((dir): dir is string => typeof dir === "string")
-    .map((dir) => path.resolve(dir));
+  // A filesystem root (HOME=/ in containers) would turn every path into ~/...
+  const usable = (dir: string | undefined): dir is string =>
+    typeof dir === "string" && path.parse(path.resolve(dir)).root !== path.resolve(dir);
+  const homes = [input.homeDir, input.osHomeDir].filter(usable).map((dir) => path.resolve(dir));
   const stateDir = path.resolve(input.stateDir);
   const agentsDir = path.join(stateDir, "agents");
+  const configDir = input.configPath ? path.dirname(path.resolve(input.configPath)) : undefined;
+  const bases: [string, string][] = [
+    ...homes.map((home): [string, string] => [home, "~"]),
+    ...(usable(stateDir) ? [[stateDir, "<state>"] as [string, string]] : []),
+    ...(usable(configDir) ? [[configDir, "<config>"] as [string, string]] : []),
+  ];
 
   const displayPath = (raw: string): string => {
     let file = path.resolve(raw);
@@ -168,10 +186,7 @@ export function renderReportCard(input: ReportCardInput): string {
       const relative = path.relative(base, file);
       return relative === "" ? label : [label, relative].join(path.sep);
     };
-    const shortened =
-      homes.map((home) => shorten(home, "~")).find((value) => value !== undefined) ??
-      shorten(stateDir, "<state>") ??
-      file;
+    const shortened = bases.map(([base, label]) => shorten(base, label)).find((value) => value !== undefined) ?? file;
     return sanitize(shortened);
   };
 
@@ -290,11 +305,15 @@ export function renderReportCard(input: ReportCardInput): string {
   const findingLines: string[] = ["Findings (most severe first)"];
   if (ordered.length === 0) findingLines.push("  None.");
   let shown = 0;
+  // Numbers are right-aligned so every label starts in the same column.
+  const numberWidth = String(ordered.length).length;
   for (const [index, finding] of ordered.entries()) {
-    const prefix = `  ${index + 1}. ${finding.severity.toUpperCase().padEnd(8)}  `;
+    const prefix = `  ${String(index + 1).padStart(numberWidth)}. ${finding.severity.toUpperCase().padEnd(8)}  `;
+    const findingIndent = " ".repeat(prefix.length);
     const block = [
       ...wrap(finding.label, findingIndent, prefix),
-      ...(finding.location ? locationLines(finding.location) : []),
+      ...(finding.location ? locationLines(finding.location, findingIndent) : []),
+      ...(finding.note ? wrap(finding.note, findingIndent) : []),
       ...wrap(finding.fix, fixIndent, "     Fix: "),
     ];
     const reserve = index < ordered.length - 1 ? 1 : 0;
@@ -414,12 +433,7 @@ function skillFindings(results: RiskySkillFinding[]): Finding[] {
     return {
       severity: finding.severity === "critical" ? "critical" : "warning",
       label: `Risky skill (${sanitize(finding.ruleId)})`,
-      location: {
-        before: `skill ${number} in `,
-        path: rootLabels[finding.rootKind] ?? "a skills folder",
-        suffix: `: ${kind} line ${first}${more}`,
-        detail: "",
-      },
+      note: `skill ${number} in ${rootLabels[finding.rootKind] ?? "a skills folder"}: ${kind} line ${first}${more}`,
       fix: skillRuleFixes[finding.ruleId] ?? "Review this skill before use.",
     } satisfies Finding;
   });

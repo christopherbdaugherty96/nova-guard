@@ -178,7 +178,7 @@ function isMissing(error: unknown): boolean {
 }
 
 function sanitize(text: string): string {
-  const clean = text.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "");
+  const clean = text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
   return clean.length > maxReportedPathLength ? `${clean.slice(0, maxReportedPathLength - 1)}…` : clean;
 }
 

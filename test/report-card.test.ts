@@ -467,9 +467,11 @@ test("version and secret fixes fit the evidence", () => {
 
 test("skill root labels are never cut, even with large numbers", () => {
   const ws = path.join(stateDir, "workspace", ".agents", "skills");
+  // Skill 10 is the only critical one, so it is listed first.
   const many = Array.from({ length: 10 }, (_, i) =>
     skillHit({
-      ruleId: "dangerous-exec",
+      ruleId: i === 9 ? "dangerous-exec" : "suspicious-network",
+      severity: i === 9 ? "critical" : "warn",
       root: ws,
       rootKind: "workspace-agents",
       skillDir: path.join(ws, `s${i}`),
