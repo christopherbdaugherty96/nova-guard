@@ -390,3 +390,127 @@ test("with no OpenClaw state directory, nothing is graded pass", async () => {
     assert.match(result.stdout, /No OpenClaw state directory was found/);
   });
 });
+
+// ------------------------------------------------------------- review round 1
+
+test("a config root or gateway section OpenClaw would reject is unreadable, never graded", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    write(path.join(root, "list.json"), "[1]");
+    for (const text of [
+      "[]",
+      "5",
+      '"x"',
+      "null",
+      '{ "gateway": "lan" }',
+      '{ "gateway": [] }',
+      '{ "gateway": { "auth": "token" } }',
+      '{ "gateway": { "tailscale": [] } }',
+      '{ "skills": [] }',
+      '{ "skills": { "load": "x" } }',
+      '{ "agents": "x" }',
+      '{ "$include": ["./list.json"] }',
+    ]) {
+      write(configPath, text);
+      assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" }, text);
+    }
+  });
+});
+
+test("only __proto__ is dropped outside include merges, so an agent named constructor is kept", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    write(configPath, '{ "agents": { "entries": { "constructor": { "workspace": "/ws" } } } }');
+    const loaded = loadOpenClawConfig(configPath, []);
+    assert.equal(loaded.status, "ok");
+    const config = (loaded as { config: { agents: { entries: Record<string, unknown> } } }).config;
+    assert.ok(Object.hasOwn(config.agents.entries, "constructor"));
+  });
+});
+
+test("include merges that would copy too much are unreadable instead of slow", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    write(path.join(root, "b.json"), JSON.stringify({ x: new Array(150_000).fill(0) }));
+    write(configPath, JSON.stringify({ $include: new Array(200).fill("./b.json") }));
+    const started = performance.now();
+    assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" });
+    assert.ok(performance.now() - started < 10_000);
+  });
+});
+
+test("hardlinked include files are rejected, as in OpenClaw", posixOnly, async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    write(path.join(root, "real.json5"), "{ a: 1 }");
+    execFileSync("ln", [path.join(root, "real.json5"), path.join(root, "hard.json5")]);
+    write(configPath, '{ "$include": "./hard.json5" }');
+    assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" });
+  });
+});
+
+test("an invalid OPENCLAW_PROFILE leaves the workspace unresolved", () => {
+  const home = path.resolve(path.sep, "home", "chris");
+  assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_PROFILE: "../x" }, () => home)?.workspaceDir, undefined);
+});
+
+test("a relative or empty PATH entry is never searched for openclaw", posixOnly, async () => {
+  await tempRoot(async (root) => {
+    const cwdBin = path.join(root, "cwd");
+    fakeOpenClaw(cwdBin, `console.log("OpenClaw 2099.1.1");`);
+    const previous = process.cwd();
+    process.chdir(cwdBin);
+    try {
+      for (const PATH of ["/usr/bin:", ":/usr/bin", ".:/usr/bin", "bin"]) {
+        assert.equal(await probeOpenClawVersion({ env: { PATH } }), undefined, PATH);
+      }
+    } finally {
+      process.chdir(previous);
+    }
+  });
+});
+
+test("a timed-out openclaw is killed with its descendants", posixOnly, async () => {
+  await tempRoot(async (root) => {
+    const bin = path.join(root, "bin");
+    const marker = path.join(root, "child.pid");
+    fakeOpenClaw(
+      bin,
+      `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
+       const c = spawn("${process.execPath}", ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+       writeFileSync(${JSON.stringify(marker)}, String(c.pid)); setInterval(() => {}, 1000);`,
+    );
+    assert.equal(await probeOpenClawVersion({ env: pathEnv(bin), timeoutMs: 1500 }), undefined);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const pid = Number(readFileSync(marker, "utf8"));
+    assert.throws(() => process.kill(pid, 0), "the descendant is gone");
+  });
+});
+
+test("the gateway credential file outside the state dir counts only for the default state dir", async () => {
+  await tempRoot((root) => {
+    const home = path.join(root, "home");
+    const state = path.join(root, "custom");
+    write(path.join(state, "openclaw.json"), '{ "gateway": { "bind": "lan", "auth": { "mode": "token" } } }');
+    write(path.join(home, ".config", "openclaw", "gateway.env"), "OPENCLAW_GATEWAY_TOKEN=letmein\n");
+    const custom = runCli(["check"], { HOME: home, USERPROFILE: home, OPENCLAW_STATE_DIR: state, ...pathEnv(path.join(root, "nb")) });
+    assert.match(custom.stdout, /^ {2}Gateway exposure +UNKNOWN$/m, custom.stdout);
+    write(path.join(home, ".openclaw", "openclaw.json"), '{ "gateway": { "bind": "lan", "auth": { "mode": "token" } } }');
+    const defaults = runCli(["check"], { HOME: home, USERPROFILE: home, ...pathEnv(path.join(root, "nb")) });
+    assert.match(defaults.stdout, /^ {2}Gateway exposure +WARNING$/m, defaults.stdout);
+  });
+});
+
+test("an omitted bind is unknown unless nova-guard itself runs in a container", async () => {
+  await tempRoot((root) => {
+    const home = path.join(root, "home");
+    write(path.join(home, ".openclaw", "openclaw.json"), "{}");
+    const result = runCli(["check"], { HOME: home, USERPROFILE: home, ...pathEnv(path.join(root, "nb")) });
+    assert.doesNotMatch(result.stdout, /^ {2}Gateway exposure +PASS$/m, result.stdout);
+  });
+});
+
+test("the package builds before it is packed or installed from git", () => {
+  const pkg = JSON.parse(readFileSync(path.join(repo, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.equal(pkg.scripts.prepare, "npm run build");
+});
