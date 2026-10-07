@@ -464,3 +464,100 @@ test("version and secret fixes fit the evidence", () => {
   assert.match(include, /SecretRef/);
   assert.doesNotMatch(include, /chmod/);
 });
+
+test("skill root labels are never cut, even with large numbers", () => {
+  const ws = path.join(stateDir, "workspace", ".agents", "skills");
+  const many = Array.from({ length: 10 }, (_, i) =>
+    skillHit({
+      ruleId: "dangerous-exec",
+      root: ws,
+      rootKind: "workspace-agents",
+      skillDir: path.join(ws, `s${i}`),
+      file: path.join(ws, `s${i}`, "x.tsx"),
+      line: 123456,
+    }),
+  );
+  const card = renderReportCard(input({ skills: skillsWith([...many, { ...(many[9] as RiskySkillsResult["findings"][number]), line: 999999 }]) }));
+  assertFitsOnePage(card);
+  assert.ok(card.includes("skill 10 in a workspace .agents/skills folder"), card);
+  assert.ok(!card.includes("…"), card);
+});
+
+test("a home directory of / is not used to shorten paths", () => {
+  const varState = path.resolve(path.sep, "var", "lib", "openclaw");
+  const etc = path.resolve(path.sep, "etc", "oc", "openclaw.json");
+  const card = renderReportCard(
+    input({
+      homeDir: path.parse(process.cwd()).root,
+      stateDir: varState,
+      secrets: {
+        ...secretsPass,
+        grade: "warning",
+        findings: [
+          { kind: "plaintext", file: path.join(varState, "agents", "a", "agent", "models.json"), key: "k" },
+          { kind: "plaintext", file: etc, key: "k" },
+        ],
+        summary: "2",
+      },
+    }),
+  );
+  assert.ok(card.includes(`in ${["<state>", "agents", "*", "agent", "models.json"].join(path.sep)}`), card);
+  assert.ok(card.includes(`in ${etc}`), card);
+  assert.ok(!card.includes(`~${path.sep}`), card);
+});
+
+test("a config directory outside home and state prints as <config>", () => {
+  const configDir = path.resolve(path.sep, "data", "letmein-private");
+  const card = renderReportCard(
+    input({
+      configPath: path.join(configDir, "openclaw.json"),
+      secrets: {
+        ...secretsPass,
+        grade: "warning",
+        findings: [{ kind: "plaintext", file: path.join(configDir, "openclaw.json"), key: "k" }],
+        summary: "1",
+      },
+    }),
+  );
+  assert.ok(card.includes(`in ${["<config>", "openclaw.json"].join(path.sep)}`), card);
+  assert.ok(!card.includes("letmein"), card);
+});
+
+test("rarer wide characters cannot push a line past the page width", () => {
+  const odd = path.resolve(path.sep, "opt", "\u{1B000}".repeat(60), "c.json");
+  const card = renderReportCard(input({ secrets: { ...secretsPass, grade: "unknown", unreadable: [odd], summary: "x" } }));
+  // Columns are measured pessimistically here too: any non-ASCII character as two.
+  for (const line of card.split("\n")) {
+    if (line === waitlistUrl) continue;
+    let width = 0;
+    for (const char of line) width += char.charCodeAt(0) < 0x80 ? 1 : 2;
+    assert.ok(width <= reportCardWidth, line);
+  }
+});
+
+test("a long key keeps its label when it moves to its own line", () => {
+  const card = renderReportCard(
+    input({
+      secrets: {
+        ...secretsPass,
+        grade: "warning",
+        findings: [{ kind: "plaintext", file: path.join(stateDir, ".env"), line: 2, key: `${"X".repeat(70)}_TOKEN` }],
+        summary: "1",
+      },
+    }),
+  );
+  assert.ok(card.split("\n").some((line) => /^ +key …X+_TOKEN$/.test(line)), card);
+});
+
+test("labels and continuation lines align when there are ten or more findings", () => {
+  const findings = Array.from({ length: 12 }, (_, i) => ({ kind: "plaintext" as const, file: configPath, key: `k${i}` }));
+  const lines = renderReportCard(input({ secrets: { ...secretsPass, grade: "warning", findings, summary: "12" } })).split("\n");
+  const first = lines.findIndex((line) => / 1\. WARNING/.test(line));
+  const tenth = lines.findIndex((line) => /10\. WARNING/.test(line));
+  assert.ok(first >= 0 && tenth >= 0);
+  for (const index of [first, tenth]) {
+    const labelColumn = (lines[index] as string).indexOf("Plaintext");
+    const next = lines[index + 1] as string;
+    assert.equal(next.length - next.trimStart().length, labelColumn, `${lines[index]}\n${next}`);
+  }
+});
