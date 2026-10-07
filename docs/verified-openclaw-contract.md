@@ -66,14 +66,16 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   objects, with string `id`, `workspace`, and `agentDir`;
   `agents.defaults.workspace` a string; `skills.load.extraDirs` and
   `allowSymlinkTargets` arrays of strings; and every gateway field the gateway
-  check reads must be valid: `bind` one of `auto`, `loopback`, `lan`, `tailnet`,
+  check reads, plus `port`, must be valid: `port` an integer from 1 to 65535; `bind` one of `auto`, `loopback`, `lan`, `tailnet`,
   `custom`; `customBindHost` a string; `trustedProxies` an array of strings;
   `tailscale.mode` one of `off`, `serve`, `funnel`; `auth.mode` one of `none`,
   `token`, `password`, `trusted-proxy`; `auth.token`/`auth.password` a string
   or a SecretRef with exactly `source` (`env`, `file`, `exec`, `store`),
   `provider` (`/^[a-z][a-z0-9_-]{0,63}$/`), and an `id` valid for its source
   (src/secrets/ref-contract.ts); `auth.trustedProxy.userHeader` a string.
-  Otherwise OpenClaw refuses it and so does the check command.
+  Otherwise OpenClaw refuses it and so does the check command. nova-guard
+  does not reimplement OpenClaw's whole config schema: an invalid value in a
+  field outside these is not detected.
 - If the resolved state directory does not exist, every check still runs (an
   explicit `OPENCLAW_CONFIG_PATH`, `~/.agents/skills`, `OPENCLAW_WORKSPACE_DIR`,
   and `~/.config/openclaw/gateway.env` are still read) and keeps its findings,

@@ -146,6 +146,8 @@ function hasLoadableShape(config: unknown): boolean {
     const auth = value.auth;
     const tailscale = value.tailscale;
     return (
+      (value.port === undefined ||
+        (Number.isInteger(value.port) && (value.port as number) >= 1 && (value.port as number) <= 65_535)) &&
       oneOf(value.bind, ["auto", "loopback", "lan", "tailnet", "custom"]) &&
       text(value.customBindHost) &&
       strings(value.trustedProxies) &&

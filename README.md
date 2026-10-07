@@ -80,8 +80,9 @@ from absolute `PATH` entries and with only those in its `PATH`, at most 10
 seconds, then killed with anything it started), runs the four checks, and prints the report card. nova-guard makes no
 network calls and writes nothing; `openclaw --version` is OpenClaw's own code.
 Anything it cannot verify (no OpenClaw state directory, a config or include
-OpenClaw would reject, no version output) is reported as unknown, never as
-pass. The gateway grade reads the config only: an omitted `gateway.bind` is
+OpenClaw would reject in the fields the checks read, no version output) is
+reported as unknown, never as pass. It does not reimplement OpenClaw's whole
+config schema, so an invalid value elsewhere is not detected. The gateway grade reads the config only: an omitted `gateway.bind` is
 unknown unless nova-guard itself runs in a container, and a `--bind` flag
 passed to the gateway (as OpenClaw's Docker setup does) is not visible to it.
 The exit code is 0 whenever a card is printed and 2 for a usage error.
