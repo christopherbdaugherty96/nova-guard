@@ -552,3 +552,68 @@ test("on Windows the probe's process tree is killed by the system taskkill, not 
   assert.equal(windowsTreeKillCommand(4242, {}), undefined);
   assert.equal(windowsTreeKillCommand(4242, { SystemRoot: "Windows" }), undefined);
 });
+
+test("the probe's own PATH keeps only absolute entries, so a node in the current directory never runs", posixOnly, async () => {
+  await tempRoot(async (root) => {
+    const bin = path.join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(path.join(bin, "openclaw"), '#!/usr/bin/env node\nconsole.log("OpenClaw 2026.9.8");\n');
+    chmodSync(path.join(bin, "openclaw"), 0o755);
+    const cwd = path.join(root, "cwd");
+    const marker = path.join(root, "hijacked");
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(path.join(cwd, "node"), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\necho "OpenClaw 2099.1.1"\n`);
+    chmodSync(path.join(cwd, "node"), 0o755);
+    const previous = process.cwd();
+    process.chdir(cwd);
+    try {
+      const PATH = `:${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+      assert.equal(await probeOpenClawVersion({ env: { PATH } }), "OpenClaw 2026.9.8");
+    } finally {
+      process.chdir(previous);
+    }
+    assert.equal(statSync(marker, { throwIfNoEntry: false }), undefined, "the current directory's node ran");
+  });
+});
+
+test("nested objects count toward the include merge budget", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    const nested: Record<string, object> = {};
+    for (let i = 0; i < 60_000; i += 1) nested[`k${i}`] = {};
+    write(path.join(root, "big.json"), JSON.stringify({ a: nested }));
+    write(path.join(root, "s.json"), "{}");
+    write(configPath, JSON.stringify({ $include: ["./big.json", ...new Array(254).fill("./s.json")] }));
+    const started = performance.now();
+    assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" });
+    assert.ok(performance.now() - started < 10_000, `${performance.now() - started} ms`);
+  });
+});
+
+test("processes a successful probe left behind are killed too", posixOnly, async () => {
+  await tempRoot(async (root) => {
+    const bin = path.join(root, "bin");
+    const marker = path.join(root, "bg.pid");
+    fakeOpenClaw(
+      bin,
+      `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
+       const c = spawn(${JSON.stringify(process.execPath)}, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+       writeFileSync(${JSON.stringify(marker)}, String(c.pid)); c.unref(); console.log("OpenClaw 2026.9.8");`,
+    );
+    assert.equal(await probeOpenClawVersion({ env: pathEnv(bin) }), "OpenClaw 2026.9.8");
+    const pid = Number(readFileSync(marker, "utf8"));
+    const running = () => {
+      try {
+        const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
+        return state !== "" && !state.startsWith("Z");
+      } catch {
+        return false;
+      }
+    };
+    const deadline = Date.now() + 3000;
+    while (running() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    const alive = running();
+    if (alive) process.kill(pid, "SIGKILL");
+    assert.equal(alive, false, "the background process survived");
+  });
+});
