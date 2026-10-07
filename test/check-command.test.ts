@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { loadOpenClawConfig } from "../src/cli/config.js";
 import { detectContainer } from "../src/cli/container.js";
 import { resolveOpenClawLocations } from "../src/cli/locate.js";
-import { npmShimScript, probeOpenClawVersion, windowsTreeKillCommand } from "../src/cli/version-probe.js";
+import { npmShimScript, probeOpenClawVersion, windowsTreeKillAvailable, windowsTreeKillCommand } from "../src/cli/version-probe.js";
 import { toolVersion } from "../src/version.js";
 
 const posixOnly = { skip: process.platform === "win32" };
@@ -553,6 +553,41 @@ test("on Windows the probe's process tree is killed by the system taskkill, not 
   // Without a trustworthy absolute SystemRoot there is no tree kill to run.
   assert.equal(windowsTreeKillCommand(4242, {}), undefined);
   assert.equal(windowsTreeKillCommand(4242, { SystemRoot: "Windows" }), undefined);
+});
+
+test("on Windows the probe does not start without a trusted system taskkill", async () => {
+  assert.equal(windowsTreeKillAvailable({}, {}), false);
+  assert.equal(windowsTreeKillAvailable({ SystemRoot: "C:\\Windows" }, {}), true);
+
+  await tempRoot(async (root) => {
+    const bin = path.join(root, "bin");
+    const script = path.join(bin, "openclaw-entry.mjs");
+    const marker = path.join(root, "probe-started");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(script, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "started");\nconsole.log("OpenClaw 2026.9.8");\n`);
+    writeFileSync(path.join(bin, "openclaw.cmd"), `@ECHO off\r\n"%_prog%"  "%dp0%\\openclaw-entry.mjs" %*\r\n`);
+
+    assert.equal(
+      await probeOpenClawVersion({ env: { PATH: bin, SystemRoot: "C:\\Windows" }, platform: "win32" }),
+      "OpenClaw 2026.9.8",
+    );
+    assert.ok(statSync(marker, { throwIfNoEntry: false }), "the control probe did not start");
+    rmSync(marker);
+
+    const savedSystemRoot = process.env.SystemRoot;
+    const savedUpperSystemRoot = process.env.SYSTEMROOT;
+    delete process.env.SystemRoot;
+    delete process.env.SYSTEMROOT;
+    try {
+      assert.equal(await probeOpenClawVersion({ env: { PATH: bin }, platform: "win32" }), undefined);
+      assert.equal(statSync(marker, { throwIfNoEntry: false }), undefined, "the version probe started");
+    } finally {
+      if (savedSystemRoot === undefined) delete process.env.SystemRoot;
+      else process.env.SystemRoot = savedSystemRoot;
+      if (savedUpperSystemRoot === undefined) delete process.env.SYSTEMROOT;
+      else process.env.SYSTEMROOT = savedUpperSystemRoot;
+    }
+  });
 });
 
 test("the probe's own PATH keeps only absolute entries, so a node in the current directory never runs", posixOnly, async () => {
