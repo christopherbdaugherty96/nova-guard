@@ -674,3 +674,35 @@ test("repeated large includes are refused before they exhaust memory", async () 
     assert.equal(output, "unreadable");
   });
 });
+
+test("every agents.list entry and agents.entries value must be an object", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    for (const text of ['{ "agents": { "list": ["invalid"] } }', '{ "agents": { "list": [null] } }', '{ "agents": { "entries": { "a": 5 } } }']) {
+      write(configPath, text);
+      assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" }, text);
+    }
+  });
+});
+
+test("relative OpenClaw path overrides depend on the gateway's working directory and are not trusted", () => {
+  const home = path.resolve(path.sep, "home", "chris");
+  assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_WORKSPACE_DIR: "~/agent" }, () => home)?.workspaceDir, undefined);
+  assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_WORKSPACE_DIR: "ws" }, () => home)?.workspaceDir, undefined);
+  assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_STATE_DIR: "state" }, () => home), undefined);
+  assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_CONFIG_PATH: "openclaw.json" }, () => home), undefined);
+  // A leading ~ in the state and config overrides is OpenClaw's own expansion.
+  assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_STATE_DIR: "~/s" }, () => home)?.stateDir, path.join(home, "s"));
+});
+
+test("without a state directory, the global gateway.env is still scanned for plaintext secrets", async () => {
+  await tempRoot((root) => {
+    const home = path.join(root, "home");
+    write(path.join(home, ".config", "openclaw", "gateway.env"), "OPENCLAW_GATEWAY_TOKEN=letmein-gateway\n");
+    const result = runCli(["check"], { HOME: home, USERPROFILE: home, ...pathEnv(path.join(root, "nb")) });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, result.stdout);
+    assert.match(result.stdout, /key OPENCLAW_GATEWAY_TOKEN/);
+    assert.ok(!result.stdout.includes("letmein"));
+  });
+});
