@@ -43,13 +43,13 @@ export function resolveOpenClawLocations(
   homedir: () => string = os.homedir,
 ): OpenClawLocations | undefined {
   const rawOsHome = homeValue(env.HOME) ?? homeValue(env.USERPROFILE) ?? safeHomedir(homedir);
-  if (!rawOsHome) return undefined;
+  // A relative home would resolve against the gateway's working directory.
+  if (!rawOsHome || !path.isAbsolute(rawOsHome)) return undefined;
   const osHomeDir = path.resolve(rawOsHome);
 
-  const explicitHome = homeValue(env.OPENCLAW_HOME);
-  const homeDir = explicitHome
-    ? path.resolve(explicitHome.replace(/^~(?=$|[\\/])/, () => osHomeDir))
-    : osHomeDir;
+  const explicitHome = homeValue(env.OPENCLAW_HOME)?.replace(/^~(?=$|[\\/])/, () => osHomeDir);
+  if (explicitHome !== undefined && !path.isAbsolute(explicitHome)) return undefined;
+  const homeDir = explicitHome ? path.resolve(explicitHome) : osHomeDir;
 
   // OpenClaw's resolveUserPath: trim, expand a leading ~ to OpenClaw's home, resolve.
   // OpenClaw's resolveUserPath: trim and expand a leading ~ to OpenClaw's home.

@@ -31,7 +31,11 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
 
 - Home: `OPENCLAW_HOME` (a leading `~` means the OS home), else `HOME`, else
   `USERPROFILE`, else the OS home directory; blank, `undefined`, and `null`
-  count as unset.
+  count as unset. OpenClaw resolves a path still relative after `~` expansion
+  (home, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `OPENCLAW_WORKSPACE_DIR`,
+  which gets no `~` expansion, and include roots) against its own working
+  directory, which nova-guard cannot know: such paths are not trusted, and what
+  depends on them is unknown (relative include roots are dropped).
 - State: `OPENCLAW_STATE_DIR` (leading `~` expanded to OpenClaw's home), else
   `<home>/.openclaw`. Config: `OPENCLAW_CONFIG_PATH`, else
   `<state>/openclaw.json`. The CLI's `--profile` sets these variables; a
