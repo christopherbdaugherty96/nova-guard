@@ -94,14 +94,19 @@ function deepMerge(base: unknown, override: unknown, budget: MergeBudget): unkno
 function hasLoadableShape(config: unknown): boolean {
   if (!isPlainObject(config)) return false;
   const section = (value: unknown) => value === undefined || isPlainObject(value);
+  const list = (value: unknown) => value === undefined || Array.isArray(value);
   const gateway = config.gateway;
   const skills = config.skills;
+  const agents = config.agents;
+  const load = isPlainObject(skills) ? skills.load : undefined;
   return (
     section(gateway) &&
-    section(config.agents) &&
+    section(agents) &&
     section(skills) &&
     (!isPlainObject(gateway) || (section(gateway.auth) && section(gateway.tailscale))) &&
-    (!isPlainObject(skills) || section(skills.load))
+    (!isPlainObject(agents) || (list(agents.list) && section(agents.entries) && section(agents.defaults))) &&
+    section(load) &&
+    (!isPlainObject(load) || (list(load.extraDirs) && list(load.allowSymlinkTargets)))
   );
 }
 
@@ -179,7 +184,9 @@ export function loadOpenClawConfig(
     const includeValue = value[includeKey];
     const targets = Array.isArray(includeValue) ? includeValue : [includeValue];
     if (!Array.isArray(includeValue) && typeof includeValue !== "string") throw new IncludeRejected();
-    const loaded: unknown[] = [];
+    // Several includes merge one at a time, so the merge budget applies before
+    // every parsed file is held in memory at once.
+    let included: unknown = Array.isArray(includeValue) ? {} : undefined;
     for (const target of targets) {
       if (typeof target !== "string") throw new IncludeRejected();
       const resolved = resolveInclude(target, basePath);
@@ -188,11 +195,9 @@ export function loadOpenClawConfig(
       if (loads > maxIncludeLoads) throw new IncludeRejected();
       const file = reader.readText(resolved);
       if (file.status !== "ok") throw new IncludeRejected();
-      loaded.push(process(parse(file.text), resolved, new Set([...visited, resolved]), depth + 1));
+      const entry = process(parse(file.text), resolved, new Set([...visited, resolved]), depth + 1);
+      included = Array.isArray(includeValue) ? deepMerge(included, entry, budget) : entry;
     }
-    const included = Array.isArray(includeValue)
-      ? loaded.reduce<unknown>((current, entry) => deepMerge(current, entry, budget), {})
-      : loaded[0];
 
     const siblings = Object.keys(value).filter((key) => key !== includeKey && key !== "__proto__");
     if (siblings.length === 0) return included;

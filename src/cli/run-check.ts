@@ -63,7 +63,18 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     // Nothing of OpenClaw's was found here; an empty scan must not read as pass.
     const summary = "No OpenClaw state directory was found, so this could not be checked.";
     const secrets: PlaintextSecretsResult = { grade: "unknown", findings: [], unreadable: [], scanned: [], summary };
-    const skills: RiskySkillsResult = { grade: "unknown", findings: [], unknown: [], skills: 0, summary };
+    // OpenClaw still loads skills from ~/.agents/skills and OPENCLAW_WORKSPACE_DIR,
+    // so they are scanned; with nothing found, the result is unknown, not pass.
+    const scanned = assessRiskySkills(
+      {
+        stateDir: locations.stateDir,
+        homeDir: locations.homeDir,
+        osHomeDir: locations.osHomeDir,
+        ...(locations.workspaceDir === undefined ? {} : { workspaceDir: locations.workspaceDir }),
+      },
+      config,
+    );
+    const skills: RiskySkillsResult = scanned.grade === "pass" ? { ...scanned, grade: "unknown", summary } : scanned;
     return renderReportCard({
       homeDir: locations.homeDir,
       osHomeDir: locations.osHomeDir,
