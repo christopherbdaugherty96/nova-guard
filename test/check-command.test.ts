@@ -711,3 +711,22 @@ test("a relative OPENCLAW_HOME is not trusted either", () => {
   const home = path.resolve(path.sep, "home", "chris");
   assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_HOME: "oc-home" }, () => home), undefined);
 });
+
+test("path-like settings the checks read must be strings, or the config is unreadable", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    for (const text of [
+      '{ "gateway": { "bind": "loopback" }, "skills": { "load": { "extraDirs": [5] } } }',
+      '{ "skills": { "load": { "allowSymlinkTargets": [null] } } }',
+      '{ "agents": { "defaults": { "workspace": 5 } } }',
+      '{ "agents": { "list": [{ "id": "a", "workspace": ["/x"] }] } }',
+      '{ "agents": { "list": [{ "id": 7 }] } }',
+      '{ "agents": { "entries": { "a": { "agentDir": {} } } } }',
+    ]) {
+      write(configPath, text);
+      assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" }, text);
+    }
+    write(configPath, '{ "agents": { "defaults": { "workspace": "/w" }, "list": [{ "id": "a", "workspace": "/x", "agentDir": "/d" }] }, "skills": { "load": { "extraDirs": ["/e"], "allowSymlinkTargets": ["/t"] } } }');
+    assert.equal(loadOpenClawConfig(configPath, []).status, "ok");
+  });
+});
