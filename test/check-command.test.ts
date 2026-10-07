@@ -753,7 +753,7 @@ test("every gateway field the gateway check reads must have a shape OpenClaw acc
     }
     write(
       configPath,
-      '{ "gateway": { "bind": "custom", "customBindHost": "127.0.0.1", "trustedProxies": ["10.0.0.1"], "tailscale": { "mode": "off" }, "auth": { "mode": "trusted-proxy", "token": { "source": "env", "id": "T" }, "password": "${P}", "trustedProxy": { "userHeader": "x-user" } } } }',
+      '{ "gateway": { "bind": "custom", "customBindHost": "127.0.0.1", "trustedProxies": ["10.0.0.1"], "tailscale": { "mode": "off" }, "auth": { "mode": "trusted-proxy", "token": { "source": "env", "provider": "default", "id": "T" }, "password": "${P}", "trustedProxy": { "userHeader": "x-user" } } } }',
     );
     assert.equal(loadOpenClawConfig(configPath, []).status, "ok");
   });
@@ -768,4 +768,86 @@ test("a project-local npm shim may point at its sibling package, but no further"
   assert.equal(npmShimScript('"%dp0%\\..\\..\\evil.mjs" %*', bin), undefined);
   const globalDir = path.resolve(path.sep, "npm");
   assert.equal(npmShimScript('"%dp0%\\..\\openclaw\\openclaw.mjs" %*', globalDir), undefined);
+});
+
+// ------------------------------------------------------------- review round 7
+
+test("a SecretRef must have exactly the source, provider, and id OpenClaw's schema accepts", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    for (const ref of [
+      "{}",
+      '{ "source": "env", "id": "OPENCLAW_GATEWAY_TOKEN" }',
+      '{ "source": "env", "provider": "default" }',
+      '{ "source": "vault", "provider": "default", "id": "T" }',
+      '{ "source": "env", "provider": "Default", "id": "T" }',
+      '{ "source": "env", "provider": "default", "id": "lower_case" }',
+      '{ "source": "store", "provider": "default", "id": "a-b" }',
+      '{ "source": "file", "provider": "default", "id": "relative/pointer" }',
+      '{ "source": "file", "provider": "default", "id": "/bad~2escape" }',
+      '{ "source": "exec", "provider": "vault", "id": "a/../b" }',
+      '{ "source": "exec", "provider": "vault", "id": "-leading" }',
+      '{ "source": "env", "provider": "default", "id": "T", "extra": 1 }',
+      '{ "source": "env", "provider": "default", "id": 5 }',
+    ]) {
+      for (const field of ["token", "password"]) {
+        write(configPath, `{ "gateway": { "bind": "loopback", "auth": { "${field}": ${ref} } } }`);
+        assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" }, `${field}: ${ref}`);
+      }
+    }
+    for (const ref of [
+      '{ "source": "env", "provider": "default", "id": "OPENCLAW_GATEWAY_TOKEN" }',
+      '{ "source": "store", "provider": "my-store", "id": "GATEWAY_TOKEN" }',
+      '{ "source": "file", "provider": "mounted", "id": "/gateway/token" }',
+      '{ "source": "file", "provider": "mounted", "id": "value" }',
+      '{ "source": "exec", "provider": "vault", "id": "openclaw/gateway-token" }',
+    ]) {
+      write(configPath, `{ "gateway": { "bind": "loopback", "auth": { "token": ${ref}, "password": ${ref} } } }`);
+      assert.equal(loadOpenClawConfig(configPath, []).status, "ok", ref);
+    }
+  });
+});
+
+test("an absent state directory keeps every check from passing, even with an explicit clean config", async () => {
+  await tempRoot((root) => {
+    const home = path.join(root, "home");
+    mkdirSync(home, { recursive: true });
+    const configPath = path.join(root, "conf", "openclaw.json");
+    write(configPath, `{ gateway: { bind: "loopback", auth: { mode: "token" } } }`);
+    const bin = path.join(root, "bin");
+    fakeOpenClaw(bin, `if (process.argv[2] === "--version") console.log("OpenClaw 2026.9.8 (abc1234)");`);
+    const result = runCli(["check"], {
+      HOME: home,
+      USERPROFILE: home,
+      OPENCLAW_STATE_DIR: path.join(root, "missing-state"),
+      OPENCLAW_CONFIG_PATH: configPath,
+      ...pathEnv(bin),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^ {2}Gateway exposure +UNKNOWN$/m, result.stdout);
+    assert.match(result.stdout, /^ {2}Plaintext secrets +UNKNOWN$/m, result.stdout);
+    assert.match(result.stdout, /^ {2}Risky skills +UNKNOWN$/m, result.stdout);
+    assert.doesNotMatch(result.stdout, /^Overall: PASS$/m);
+    assert.match(result.stdout, /No OpenClaw state directory was found/);
+  });
+});
+
+test("an absent state directory keeps findings from an explicit config", async () => {
+  await tempRoot((root) => {
+    const home = path.join(root, "home");
+    mkdirSync(home, { recursive: true });
+    const configPath = path.join(root, "conf", "openclaw.json");
+    write(configPath, `{ gateway: { bind: "lan", auth: { mode: "none" } }, channels: { telegram: { botToken: "letmein-telegram-value" } } }`);
+    const result = runCli(["check"], {
+      HOME: home,
+      USERPROFILE: home,
+      OPENCLAW_STATE_DIR: path.join(root, "missing-state"),
+      OPENCLAW_CONFIG_PATH: configPath,
+      ...pathEnv(path.join(root, "nb")),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^ {2}Gateway exposure +CRITICAL$/m, result.stdout);
+    assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, result.stdout);
+    assert.ok(!result.stdout.includes("letmein"), result.stdout);
+  });
 });
