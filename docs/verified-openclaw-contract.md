@@ -74,8 +74,9 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   `provider` (`/^[a-z][a-z0-9_-]{0,63}$/`), and an `id` valid for its source
   (src/secrets/ref-contract.ts); `auth.trustedProxy.userHeader` a string.
   Otherwise OpenClaw refuses it and so does the check command. nova-guard
-  does not reimplement OpenClaw's whole config schema: an invalid value in a
-  field outside these is not detected.
+  does not reimplement OpenClaw's whole config schema: an unknown key, an
+  invalid value in any other field, or a cross-field rule OpenClaw enforces is
+  not detected.
 - If the resolved state directory does not exist, every check still runs (an
   explicit `OPENCLAW_CONFIG_PATH`, `~/.agents/skills`, `OPENCLAW_WORKSPACE_DIR`,
   and `~/.config/openclaw/gateway.env` are still read) and keeps its findings,
