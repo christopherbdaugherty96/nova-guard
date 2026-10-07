@@ -35,7 +35,9 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   (home, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `OPENCLAW_WORKSPACE_DIR`,
   which gets no `~` expansion, and include roots) against its own working
   directory, which nova-guard cannot know: such paths are not trusted, and what
-  depends on them is unknown (relative include roots are dropped).
+  depends on them is unknown (relative include roots are dropped). An absolute
+  `OPENCLAW_HOME` is used even when the OS home is unset or relative; only the
+  personal skills root under the OS home (`~/.agents/skills`) is then unknown.
 - State: `OPENCLAW_STATE_DIR` (leading `~` expanded to OpenClaw's home), else
   `<home>/.openclaw`. Config: `OPENCLAW_CONFIG_PATH`, else
   `<state>/openclaw.json`. The CLI's `--profile` sets these variables; a

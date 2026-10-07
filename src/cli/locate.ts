@@ -12,7 +12,8 @@ import path from "node:path";
  */
 export interface OpenClawLocations {
   homeDir: string;
-  osHomeDir: string;
+  /** Undefined when only an absolute OPENCLAW_HOME is usable: the OS home is unknown. */
+  osHomeDir: string | undefined;
   stateDir: string;
   configPath: string;
   /** Undefined when OPENCLAW_PROFILE is invalid: OpenClaw then refuses to resolve it. */
@@ -43,13 +44,24 @@ export function resolveOpenClawLocations(
   homedir: () => string = os.homedir,
 ): OpenClawLocations | undefined {
   const rawOsHome = homeValue(env.HOME) ?? homeValue(env.USERPROFILE) ?? safeHomedir(homedir);
-  // A relative home would resolve against the gateway's working directory.
-  if (!rawOsHome || !path.isAbsolute(rawOsHome)) return undefined;
-  const osHomeDir = path.resolve(rawOsHome);
+  // A relative home would resolve against the gateway's working directory, so
+  // it is not trusted. OpenClaw's own home (OPENCLAW_HOME) takes precedence and
+  // needs the OS home only to expand a leading ~ (resolveEffectiveHomeDir).
+  const osHomeDir = rawOsHome && path.isAbsolute(rawOsHome) ? path.resolve(rawOsHome) : undefined;
 
-  const explicitHome = homeValue(env.OPENCLAW_HOME)?.replace(/^~(?=$|[\\/])/, () => osHomeDir);
-  if (explicitHome !== undefined && !path.isAbsolute(explicitHome)) return undefined;
+  const rawHome = homeValue(env.OPENCLAW_HOME);
+  let explicitHome: string | undefined;
+  if (rawHome !== undefined) {
+    if (/^~(?=$|[\\/])/.test(rawHome)) {
+      if (!osHomeDir) return undefined;
+      explicitHome = rawHome.replace(/^~(?=$|[\\/])/, () => osHomeDir);
+    } else {
+      explicitHome = rawHome;
+    }
+    if (!path.isAbsolute(explicitHome)) return undefined;
+  }
   const homeDir = explicitHome ? path.resolve(explicitHome) : osHomeDir;
+  if (!homeDir) return undefined;
 
   // OpenClaw's resolveUserPath: trim, expand a leading ~ to OpenClaw's home, resolve.
   // OpenClaw's resolveUserPath: trim and expand a leading ~ to OpenClaw's home.

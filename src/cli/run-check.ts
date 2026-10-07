@@ -115,6 +115,15 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     },
     config,
   );
+  if (locations.osHomeDir === undefined) {
+    // OpenClaw's personal skills root is ~/.agents/skills under the OS home,
+    // which could not be verified, so that root is unknown.
+    skills = {
+      ...skills,
+      grade: skills.grade === "pass" ? "unknown" : skills.grade,
+      unknown: [...skills.unknown, { path: "OS home .agents/skills", reason: "unreadable" }],
+    };
+  }
   if (locations.workspaceDir === undefined) {
     // OpenClaw refuses an invalid OPENCLAW_PROFILE, so its workspace is unknown.
     skills = {
