@@ -112,7 +112,9 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   survives. On Windows a timed-out probe's tree is ended with
   `%SystemRoot%\System32\taskkill.exe /T /F` (absolute path, no shell) while
   the probe still runs, before anything else; after a clean exit nothing is
-  killed, since its PID may already be reused. On Windows, npm's `openclaw.cmd` shim (global, or a project's
+  killed, since its PID may already be reused. If no absolute system
+  `taskkill.exe` path can be established, the Windows version probe is not
+  started and the version is unknown. On Windows, npm's `openclaw.cmd` shim (global, or a project's
   `node_modules/.bin` shim pointing at its sibling package) is resolved to its
   script, which is run with Node.
 

@@ -114,6 +114,14 @@ export function windowsTreeKillCommand(
   };
 }
 
+/** Whether a trusted absolute system taskkill path is available before a Windows probe starts. */
+export function windowsTreeKillAvailable(
+  env: NodeJS.ProcessEnv,
+  fallbackEnv: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return windowsTreeKillCommand(1, env) !== undefined || windowsTreeKillCommand(1, fallbackEnv) !== undefined;
+}
+
 /** Ends the probe's whole process tree on Windows; resolves when done or after 3 seconds. */
 function killWindowsTree(pid: number, env: NodeJS.ProcessEnv): Promise<void> {
   const tree = windowsTreeKillCommand(pid, env) ?? windowsTreeKillCommand(pid, process.env);
@@ -133,6 +141,9 @@ function killWindowsTree(pid: number, env: NodeJS.ProcessEnv): Promise<void> {
 export function probeOpenClawVersion(options: VersionProbeOptions): Promise<string | undefined> {
   const platform = options.platform ?? process.platform;
   const posix = platform !== "win32";
+  // A Windows timeout is safe only when the whole process tree can be ended.
+  // Refuse to start rather than risk leaving descendants behind.
+  if (!posix && !windowsTreeKillAvailable(options.env)) return Promise.resolve(undefined);
   const target = posix ? posixCommand(options.env) : windowsCommand(options.env);
   if (!target) return Promise.resolve(undefined);
 
