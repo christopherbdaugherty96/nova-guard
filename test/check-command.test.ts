@@ -747,13 +747,17 @@ test("every gateway field the gateway check reads must have a shape OpenClaw acc
       '{ "auth": { "password": [] } }',
       '{ "auth": { "trustedProxy": "x" } }',
       '{ "auth": { "trustedProxy": { "userHeader": 5 } } }',
+      '{ "bind": "loopback", "port": "invalid" }',
+      '{ "bind": "loopback", "port": 0 }',
+      '{ "bind": "loopback", "port": 65536 }',
+      '{ "bind": "loopback", "port": 18789.5 }',
     ]) {
       write(configPath, `{ "gateway": ${gateway} }`);
       assert.deepEqual(loadOpenClawConfig(configPath, []), { status: "unreadable" }, gateway);
     }
     write(
       configPath,
-      '{ "gateway": { "bind": "custom", "customBindHost": "127.0.0.1", "trustedProxies": ["10.0.0.1"], "tailscale": { "mode": "off" }, "auth": { "mode": "trusted-proxy", "token": { "source": "env", "provider": "default", "id": "T" }, "password": "${P}", "trustedProxy": { "userHeader": "x-user" } } } }',
+      '{ "gateway": { "port": 18789, "bind": "custom", "customBindHost": "127.0.0.1", "trustedProxies": ["10.0.0.1"], "tailscale": { "mode": "off" }, "auth": { "mode": "trusted-proxy", "token": { "source": "env", "provider": "default", "id": "T" }, "password": "${P}", "trustedProxy": { "userHeader": "x-user" } } } }',
     );
     assert.equal(loadOpenClawConfig(configPath, []).status, "ok");
   });
