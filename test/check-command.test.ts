@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, s
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { loadOpenClawConfig } from "../src/cli/config.js";
 import { detectContainer } from "../src/cli/container.js";
@@ -14,7 +15,8 @@ import { toolVersion } from "../src/version.js";
 const posixOnly = { skip: process.platform === "win32" };
 const repo = path.resolve(import.meta.dirname, "..");
 const cliEntry = path.join(repo, "src", "cli.ts");
-const guard = path.join(repo, "test", "fixtures", "guard-io.mjs");
+// --import takes a module specifier: on Windows a bare C:\ path is not one.
+const guard = pathToFileURL(path.join(repo, "test", "fixtures", "guard-io.mjs")).href;
 
 function tempRoot(run: (root: string) => void | Promise<void>) {
   const root = mkdtempSync(path.join(tmpdir(), "nova-guard-cli-"));
