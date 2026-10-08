@@ -1116,6 +1116,8 @@ test("an absolute config override is scanned without a usable home or state dire
     assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, result.stdout);
     assert.match(result.stdout, /^ {2}Risky skills +UNKNOWN$/m, result.stdout);
     assert.match(result.stdout, /could not be checked/i, result.stdout);
+    assert.match(result.stdout, /state-dependent secret location could not be resolved/i, result.stdout);
+    assert.ok(!result.stdout.includes(path.join(process.cwd(), "OpenClaw state agents")), result.stdout);
     assert.ok(!result.stdout.includes("letmein"), result.stdout);
   });
 });
