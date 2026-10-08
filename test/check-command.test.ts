@@ -1072,7 +1072,8 @@ test("an unresolved agent directory remains visible beside a plaintext-secret wa
     write(path.join(state, ".env"), "OPENAI_API_KEY=letmein\n");
     const result = runCli(["check"], { HOME: home, USERPROFILE: home, ...pathEnv(path.join(root, "no-bin")) });
     assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, result.stdout);
-    assert.match(result.stdout, /Plaintext secrets: could not read .*agents[\\/]\*[\\/]models\.json/, result.stdout);
+    assert.match(result.stdout, /state-dependent secret location could not be resolved/i, result.stdout);
+    assert.doesNotMatch(result.stdout, /agents[\\/]unresolved-\d+[\\/]models\.json/, result.stdout);
     assert.ok(!result.stdout.includes("relative-private-agent"), result.stdout);
   });
 });
