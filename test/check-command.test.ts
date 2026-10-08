@@ -1310,7 +1310,7 @@ test("a relative OPENCLAW_CONFIG_PATH leaves the config unknown but still scans 
 
 // ------------------------------------------------------------- review round 14
 
-test("gateway.auth.allowTailscale must be a boolean, since it changes the Serve grade", async () => {
+test("gateway.auth.allowTailscale must be a boolean, as OpenClaw's schema requires", async () => {
   await tempRoot((root) => {
     const configPath = path.join(root, "openclaw.json");
     write(configPath, '{ "gateway": { "tailscale": { "mode": "serve" }, "auth": { "mode": "none", "allowTailscale": "yes" } } }');
