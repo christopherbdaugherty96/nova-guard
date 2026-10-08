@@ -13,9 +13,12 @@ import path from "node:path";
  * POSIX the probe gets its own process group, so a timeout kills everything it
  * started. On Windows, where Node cannot keep a reliable lifetime handle for
  * every descendant after the direct child exits, nova-guard does not execute
- * OpenClaw. It resolves npm's `openclaw.cmd` shim and reads the adjacent
- * package.json version instead. `openclaw --version` is OpenClaw's own code; nova-guard writes
- * nothing, but cannot vouch for what OpenClaw does when asked its version.
+ * OpenClaw. When npm's `openclaw.cmd` shim is the openclaw Windows would run
+ * (first in PATH/PATHEXT order, no other openclaw launcher in the way), it reads
+ * the adjacent dist/build-info.json version, else package.json; otherwise the
+ * version is unknown. On POSIX, `openclaw --version` is OpenClaw's own code;
+ * nova-guard writes nothing, but cannot vouch for what OpenClaw does when
+ * asked its version.
  */
 
 const defaultTimeoutMs = 10_000;
@@ -92,18 +95,35 @@ function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
 }
 
 function windowsPackageVersion(env: NodeJS.ProcessEnv): string | undefined {
-  const extensions = (envValue(env, "PATHEXT") ?? defaultPathExt)
-    .split(";")
-    .map((ext) => ext.trim().toLowerCase())
-    .filter((ext) => ext.startsWith("."));
-  for (const dir of pathDirs(env)) {
+  const extensions = [
+    ...new Set(
+      (envValue(env, "PATHEXT") ?? defaultPathExt)
+        .split(";")
+        .map((ext) => ext.trim().toLowerCase())
+        .filter((ext) => ext.startsWith(".")),
+    ),
+  ];
+  // cmd.exe and PowerShell strip quotes from PATH entries and skip empty ones.
+  const entries = (envValue(env, "PATH") ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim().replace(/^"(.*)"$/, "$1").trim())
+    .filter((entry) => entry !== "");
+  // Callers that start a process directly (CreateProcess, Node's spawn) never
+  // run a .cmd; they would find an openclaw.exe/.com anywhere on PATH instead.
+  if (entries.some((entry) => path.win32.isAbsolute(entry) && [".exe", ".com"].some((ext) => isFile(path.join(entry, `openclaw${ext}`))))) {
+    return undefined;
+  }
+  for (const dir of entries) {
+    // A relative entry resolves against a working directory nova-guard cannot know.
+    if (!path.win32.isAbsolute(dir)) return undefined;
     // `openclaw` runs the first PATH folder holding openclaw<ext> for an
-    // extension in PATHEXT. Only an npm .cmd shim there can be read without
-    // running OpenClaw; anything else that would run first (an .exe, .com,
-    // .bat, ...) means the installed version cannot be established: unknown.
-    const launchers = extensions.filter((ext) => isFile(path.join(dir, `openclaw${ext}`)));
+    // extension in PATHEXT, or openclaw.ps1 for PowerShell. Only an npm .cmd
+    // shim (with npm's own .ps1 beside it) can be read without running
+    // OpenClaw; anything else that could run first means the installed
+    // version cannot be established: unknown.
+    const launchers = [...extensions, ".ps1"].filter((ext) => isFile(path.join(dir, `openclaw${ext}`)));
     if (launchers.length === 0) continue;
-    if (launchers.length !== 1 || launchers[0] !== ".cmd") return undefined;
+    if (!launchers.includes(".cmd") || launchers.some((ext) => ext !== ".cmd" && ext !== ".ps1")) return undefined;
     const shim = path.join(dir, "openclaw.cmd");
     let text: string;
     try {

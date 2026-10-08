@@ -114,11 +114,16 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   the adjacent `openclaw` metadata is read without executing OpenClaw. As in
   OpenClaw's launcher, `dist/build-info.json` wins over package.json so the
   version describes the built runtime rather than newer unbuilt source. Only
-  the `openclaw` that Windows would run is graded: the first absolute `PATH`
-  folder holding `openclaw<ext>` for an extension in `PATHEXT` (Windows'
-  default list when unset) decides, and unless the only such launcher there
-  is the npm `.cmd` shim (an `.exe`, `.com`, `.bat`, ... runs first or
-  instead), the version is unknown. A
+  the `openclaw` that Windows would run is graded. `PATH` entries are read as
+  cmd.exe reads them (quotes stripped, empty entries skipped); the first folder
+  holding `openclaw<ext>` for an extension in `PATHEXT` (Windows' default list
+  when unset) or `openclaw.ps1` (PowerShell) decides, and it must hold the
+  npm `.cmd` shim and nothing else but npm's `.ps1`. A relative entry before
+  it, another launcher there (`.exe`, `.com`, `.bat`, ...), or an
+  `openclaw.exe`/`.com` anywhere on `PATH` (which a caller that starts the
+  process directly would run instead of a `.cmd`) makes the version unknown.
+  nova-guard cannot see which folder the gateway was started from (cmd.exe
+  searches the current folder first) or an absolute path a service uses. A
   Windows executable install without that npm metadata is unknown;
   this avoids starting a process tree that Node cannot reliably retain after
   the direct child exits.
