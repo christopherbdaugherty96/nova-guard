@@ -125,7 +125,9 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   OpenClaw's launcher, `dist/build-info.json` wins over package.json so the
   version describes the built runtime rather than newer unbuilt source. Shim and
   metadata files are opened once without blocking and read only up to 1 MiB;
-  anything larger, or not a regular file, makes the version unknown. Only
+  anything larger, or not a regular file, makes the version unknown (a
+  `build-info.json` that is not a regular file falls back to package.json, as
+  OpenClaw's launcher does). Only
   the `openclaw` that Windows would run is graded. `PATH` entries are read as
   cmd.exe reads them (quotes stripped, empty entries skipped); the first folder
   holding `openclaw<ext>` for an extension in `PATHEXT` (Windows' default list
