@@ -222,7 +222,7 @@ function fakeOpenClaw(dir: string, body: string, packageVersion?: string) {
     // npm's Windows shim shape.
     writeFileSync(
       path.join(dir, "openclaw.cmd"),
-      `@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n"%_prog%"  "%dp0%\\openclaw-entry.mjs" %*\r\n`,
+      npmCmdShim("openclaw-entry.mjs"),
     );
     if (packageVersion) writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "openclaw", version: packageVersion }));
   } else {
@@ -233,6 +233,10 @@ function fakeOpenClaw(dir: string, body: string, packageVersion?: string) {
 }
 
 const pathEnv = (dir: string) => ({ PATH: dir, Path: dir, SYSTEMROOT: process.env.SYSTEMROOT ?? "" });
+
+/** The exact openclaw.cmd npm's cmd-shim writes for a `#!/usr/bin/env node` bin. */
+const npmCmdShim = (target: string) =>
+  `@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${target}" %*\r\n`;
 
 test("openclaw --version is read from the executable on PATH", async () => {
   await tempRoot(async (root) => {
@@ -266,7 +270,7 @@ test("npm's Windows shim is resolved to its script without a shell", () => {
   const dir = path.resolve(path.sep, "npm");
   const shim = `@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\openclaw\\openclaw.mjs" %*\r\n`;
   assert.equal(npmShimScript(shim, dir), path.join(dir, "node_modules", "openclaw", "openclaw.mjs"));
-  assert.equal(npmShimScript('"%dp0%\\..\\..\\evil.mjs" %*', dir), undefined);
+  assert.equal(npmShimScript(npmCmdShim("..\\..\\evil.mjs"), dir), undefined);
   assert.equal(npmShimScript("@echo off\r\ncalc.exe", dir), undefined);
 });
 
@@ -596,7 +600,7 @@ test("on Windows the version comes from npm metadata without starting OpenClaw",
     const marker = path.join(root, "probe-started");
     mkdirSync(bin, { recursive: true });
     writeFileSync(script, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "started");\nconsole.log("OpenClaw 2026.9.8");\n`);
-    writeFileSync(path.join(bin, "openclaw.cmd"), `@ECHO off\r\n"%_prog%"  "%dp0%\\openclaw-entry.mjs" %*\r\n`);
+    writeFileSync(path.join(bin, "openclaw.cmd"), npmCmdShim("openclaw-entry.mjs"));
     writeFileSync(path.join(bin, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.9.8" }));
 
     assert.equal(await probeOpenClawVersion({ env: { PATH: bin }, platform: "win32" }), "2026.9.8");
@@ -627,7 +631,7 @@ test("the probe's own PATH keeps only absolute entries, so a node in the current
     const previous = process.cwd();
     process.chdir(cwd);
     try {
-      const PATH = `:${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+      const PATH = `${bin}::${path.dirname(process.execPath)}:/usr/bin:/bin`;
       assert.equal(await probeOpenClawVersion({ env: { PATH } }), "OpenClaw 2026.9.8");
     } finally {
       process.chdir(previous);
@@ -824,12 +828,12 @@ test("every gateway field the gateway check reads must have a shape OpenClaw acc
 test("a project-local npm shim may point at its sibling package, but no further", () => {
   const bin = path.resolve(path.sep, "proj", "node_modules", ".bin");
   assert.equal(
-    npmShimScript('"%dp0%\\..\\openclaw\\openclaw.mjs" %*', bin),
+    npmShimScript(npmCmdShim("..\\openclaw\\openclaw.mjs"), bin),
     path.resolve(path.sep, "proj", "node_modules", "openclaw", "openclaw.mjs"),
   );
-  assert.equal(npmShimScript('"%dp0%\\..\\..\\evil.mjs" %*', bin), undefined);
+  assert.equal(npmShimScript(npmCmdShim("..\\..\\evil.mjs"), bin), undefined);
   const globalDir = path.resolve(path.sep, "npm");
-  assert.equal(npmShimScript('"%dp0%\\..\\openclaw\\openclaw.mjs" %*', globalDir), undefined);
+  assert.equal(npmShimScript(npmCmdShim("..\\openclaw\\openclaw.mjs"), globalDir), undefined);
 });
 
 // ------------------------------------------------------------- review round 7
@@ -1130,7 +1134,7 @@ test("on Windows only the openclaw that PATH and PATHEXT select is graded", asyn
     // An npm install: openclaw.cmd plus npm's own .ps1 and extensionless sh shims.
     const npmDir = (dir: string) => {
       write(path.join(dir, "openclaw.mjs"), 'throw new Error("must not execute");\n');
-      write(path.join(dir, "openclaw.cmd"), '@ECHO off\r\n"%_prog%"  "%dp0%\\openclaw.mjs" %*\r\n');
+      write(path.join(dir, "openclaw.cmd"), npmCmdShim("openclaw.mjs"));
       write(path.join(dir, "openclaw.ps1"), "# npm shim\n");
       write(path.join(dir, "openclaw"), "#!/bin/sh\n");
       write(path.join(dir, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.9.8" }));
@@ -1172,7 +1176,7 @@ test("on Windows, PATH entries and launchers that could pick another openclaw ma
   await tempRoot(async (root) => {
     const npm = path.join(root, "npm");
     write(path.join(npm, "openclaw.mjs"), 'throw new Error("must not execute");\n');
-    write(path.join(npm, "openclaw.cmd"), '@ECHO off\r\n"%_prog%"  "%dp0%\\openclaw.mjs" %*\r\n');
+    write(path.join(npm, "openclaw.cmd"), npmCmdShim("openclaw.mjs"));
     write(path.join(npm, "openclaw.ps1"), "# npm shim\n");
     write(path.join(npm, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.9.8" }));
     const probe = (entries: string[], extra: NodeJS.ProcessEnv = {}) =>
@@ -1196,5 +1200,37 @@ test("on Windows, PATH entries and launchers that could pick another openclaw ma
     // Environment names are case-insensitive; duplicate PATHEXT entries are harmless.
     assert.equal(await probeOpenClawVersion({ env: { Path: npm }, platform: "win32" }), "2026.9.8");
     assert.equal(await probe([npm], { PATHEXT: ".CMD;.cmd;.EXE" }), "2026.9.8");
+  });
+});
+
+// ------------------------------------------------------------- review round 12
+
+test("only npm's exact cmd-shim is trusted to name the script it runs", () => {
+  const dir = path.resolve(path.sep, "npm");
+  const exact = npmCmdShim("node_modules\\openclaw\\openclaw.mjs");
+  assert.equal(npmShimScript(exact, dir), path.join(dir, "node_modules", "openclaw", "openclaw.mjs"));
+  // The target mentioned only in a comment, then something else launched.
+  assert.equal(npmShimScript(`REM "%dp0%\\node_modules\\openclaw\\openclaw.mjs"\r\n"C:\\other\\openclaw.exe" %*\r\n`, dir), undefined);
+  // A modified npm shim that launches something else after the expected line.
+  assert.equal(npmShimScript(`${exact}"C:\\other\\openclaw.exe" %*\r\n`, dir), undefined);
+  // Two different targets.
+  assert.equal(
+    npmShimScript(exact.replace("%*\r\n", `%*\r\n"%_prog%"  "%dp0%\\evil.mjs" %*\r\n`), dir),
+    undefined,
+  );
+  // The bare invocation line alone is not npm's shim.
+  assert.equal(npmShimScript('"%_prog%"  "%dp0%\\node_modules\\openclaw\\openclaw.mjs" %*\r\n', dir), undefined);
+});
+
+test("a relative or empty PATH entry before openclaw makes the POSIX version unknown", posixOnly, async () => {
+  await tempRoot(async (root) => {
+    const bin = path.join(root, "bin");
+    fakeOpenClaw(bin, `console.log("OpenClaw 2026.9.8");`);
+    // Such an entry is the gateway's working directory, which nova-guard cannot know.
+    for (const PATH of [`.:${bin}`, `:${bin}`, `rel:${bin}`]) {
+      assert.equal(await probeOpenClawVersion({ env: { PATH } }), undefined, PATH);
+    }
+    // After the openclaw that is found, it does not matter.
+    assert.equal(await probeOpenClawVersion({ env: { PATH: `${bin}:.` } }), "OpenClaw 2026.9.8");
   });
 });
