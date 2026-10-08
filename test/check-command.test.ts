@@ -604,6 +604,15 @@ test("on Windows the version comes from npm metadata without starting OpenClaw",
   });
 });
 
+test("on Windows the built runtime version outranks a newer package manifest", windowsOnly, async () => {
+  await tempRoot(async (root) => {
+    const bin = path.join(root, "bin");
+    fakeOpenClaw(bin, `throw new Error("must not execute");`, "2026.9.8");
+    write(path.join(bin, "dist", "build-info.json"), JSON.stringify({ version: "2026.1.24-0" }));
+    assert.equal(await probeOpenClawVersion({ env: { PATH: bin }, platform: "win32" }), "2026.1.24-0");
+  });
+});
+
 test("the probe's own PATH keeps only absolute entries, so a node in the current directory never runs", posixOnly, async () => {
   await tempRoot(async (root) => {
     const bin = path.join(root, "bin");
@@ -1049,5 +1058,21 @@ test("models.json in a configured agent directory inside <state>/agents is scann
       assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, `${dir}: ${result.stdout}`);
       assert.ok(!result.stdout.includes("letmein"), result.stdout);
     }
+  });
+});
+
+test("an unresolved agent directory remains visible beside a plaintext-secret warning", async () => {
+  await tempRoot((root) => {
+    const home = path.join(root, "home");
+    const state = path.join(home, ".openclaw");
+    write(
+      path.join(state, "openclaw.json"),
+      '{ gateway: { bind: "loopback" }, agents: { entries: { main: { agentDir: "relative-private-agent" } } } }',
+    );
+    write(path.join(state, ".env"), "OPENAI_API_KEY=letmein\n");
+    const result = runCli(["check"], { HOME: home, USERPROFILE: home, ...pathEnv(path.join(root, "no-bin")) });
+    assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, result.stdout);
+    assert.match(result.stdout, /Plaintext secrets: could not read .*agents[\\/]\*[\\/]models\.json/, result.stdout);
+    assert.ok(!result.stdout.includes("relative-private-agent"), result.stdout);
   });
 });
