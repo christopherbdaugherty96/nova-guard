@@ -122,6 +122,15 @@ function npmShimTarget(shimText: string, shimDir: string): { target: string; scr
   return { target: match[1], script };
 }
 
+// Shims and metadata are small; anything larger is not read (unknown), so a
+// corrupt or hostile file cannot exhaust memory.
+const maxMetadataBytes = 1024 * 1024;
+
+function readSmallText(file: string): string {
+  if (statSync(file).size > maxMetadataBytes) throw new Error("metadata file too large");
+  return readFileSync(file, "utf8");
+}
+
 function isFile(file: string): boolean {
   try {
     return statSync(file).isFile();
@@ -202,7 +211,7 @@ function windowsPackageVersion(env: NodeJS.ProcessEnv): string | undefined {
     const shim = path.join(dir, "openclaw.cmd");
     let text: string;
     try {
-      text = readFileSync(shim, "utf8");
+      text = readSmallText(shim);
     } catch {
       return undefined;
     }
@@ -213,7 +222,7 @@ function windowsPackageVersion(env: NodeJS.ProcessEnv): string | undefined {
       // PowerShell runs openclaw.ps1 instead: it must be npm's own for the same script.
       let ps1: string;
       try {
-        ps1 = readFileSync(path.join(dir, "openclaw.ps1"), "utf8");
+        ps1 = readSmallText(path.join(dir, "openclaw.ps1"));
       } catch {
         return undefined;
       }
@@ -221,13 +230,17 @@ function windowsPackageVersion(env: NodeJS.ProcessEnv): string | undefined {
     }
     try {
       const packageRoot = path.dirname(script);
-      const pkg = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")) as {
+      const pkg = JSON.parse(readSmallText(path.join(packageRoot, "package.json"))) as {
         name?: unknown;
         version?: unknown;
       };
       if (pkg.name !== "openclaw") return undefined;
+      // OpenClaw's launcher would read an oversized build-info.json; it cannot be
+      // read here, so the version is unknown rather than the package.json fallback.
+      const buildInfo = path.join(packageRoot, "dist", "build-info.json");
+      if (isFile(buildInfo) && statSync(buildInfo).size > maxMetadataBytes) return undefined;
       try {
-        const build = JSON.parse(readFileSync(path.join(packageRoot, "dist", "build-info.json"), "utf8")) as {
+        const build = JSON.parse(readSmallText(buildInfo)) as {
           version?: unknown;
         };
         if (typeof build.version === "string" && build.version.trim() !== "") return build.version.trim();

@@ -363,6 +363,10 @@ export function renderReportCard(input: ReportCardInput): string {
 // fix always matches the exposure (src/checks/gateway-exposure.ts).
 const gatewayFixes: [string, string][] = [
   [
+    "Gateway is reachable from the tailnet via Tailscale Serve without authentication.",
+    "Turn on gateway auth (token or password), or set gateway.auth.allowTailscale to use Tailscale identity.",
+  ],
+  [
     "Gateway is configured for non-loopback access without authentication.",
     "Turn on gateway auth (token or password), or bind the gateway to loopback.",
   ],

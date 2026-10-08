@@ -87,9 +87,10 @@ export function resolveOpenClawLocations(
 
   const stateDir = stateOverride ? userPath(stateOverride) : homeDirKnown ? path.join(homeDir, ".openclaw") : undefined;
   const configPath = configOverride ? userPath(configOverride) : stateDir ? path.join(stateDir, "openclaw.json") : undefined;
-  // A relative config override resolves against the gateway's working
-  // directory: the config is unknown, but the state directory is still scanned.
-  if (!configPath && !stateDir) return undefined;
+  // A relative state or config override resolves against the gateway's
+  // working directory: what depends on it is unknown, but everything else
+  // (the state directory, ~/.agents/skills, an absolute workspace) is scanned.
+  if (!configPath && !stateDir && !homeDirKnown) return undefined;
 
   let workspaceDir: string | undefined;
   const workspaceOverride = env.OPENCLAW_WORKSPACE_DIR?.trim();
@@ -97,8 +98,9 @@ export function resolveOpenClawLocations(
   if (workspaceOverride) {
     // OpenClaw resolves this one without ~ expansion, against its own working directory.
     workspaceDir = path.isAbsolute(workspaceOverride) ? path.resolve(workspaceOverride) : undefined;
-  } else if (stateOverride && stateDir) {
-    workspaceDir = path.join(stateDir, "workspace");
+  } else if (stateOverride) {
+    // OpenClaw's workspace follows the state override; a relative one is unknown.
+    workspaceDir = stateDir ? path.join(stateDir, "workspace") : undefined;
   } else if (homeDirKnown && profile && profile.toLowerCase() !== "default") {
     workspaceDir = profileName.test(profile) ? path.join(homeDir, `.openclaw-${profile}`, "workspace") : undefined;
   } else if (homeDirKnown) {

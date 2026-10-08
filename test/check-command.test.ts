@@ -787,7 +787,7 @@ test("relative OpenClaw path overrides depend on the gateway's working directory
   const home = path.resolve(path.sep, "home", "chris");
   assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_WORKSPACE_DIR: "~/agent" }, () => home)?.workspaceDir, undefined);
   assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_WORKSPACE_DIR: "ws" }, () => home)?.workspaceDir, undefined);
-  assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_STATE_DIR: "state" }, () => home), undefined);
+  assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_STATE_DIR: "state" }, () => home)?.stateDir, undefined);
   // A relative config override cannot be located, but the state directory still can.
   const relativeConfig = resolveOpenClawLocations({ HOME: home, OPENCLAW_CONFIG_PATH: "openclaw.json" }, () => home);
   assert.equal(relativeConfig?.configPath, undefined);
@@ -1361,6 +1361,10 @@ test("oversized Windows shim and metadata files are not read", async () => {
     assert.equal(await probe(), undefined);
     write(path.join(npm, "package.json"), pkg);
     write(path.join(npm, "openclaw.cmd"), npmCmdShim("openclaw.mjs") + " ".repeat(2 * 1024 * 1024));
+    assert.equal(await probe(), undefined);
+    // An oversized build-info.json would still be OpenClaw's version source: unknown, not the fallback.
+    write(path.join(npm, "openclaw.cmd"), npmCmdShim("openclaw.mjs"));
+    write(path.join(npm, "dist", "build-info.json"), JSON.stringify({ version: "2026.1.1" }) + " ".repeat(2 * 1024 * 1024));
     assert.equal(await probe(), undefined);
   });
 });

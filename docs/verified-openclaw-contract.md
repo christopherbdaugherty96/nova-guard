@@ -37,7 +37,10 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   directory, which nova-guard cannot know: such paths are not trusted, and what
   depends on them is unknown (relative include roots are dropped; with a
   relative `OPENCLAW_CONFIG_PATH` the config is unknown, but the state
-  directory is still scanned). An absolute
+  directory is still scanned; with a relative `OPENCLAW_STATE_DIR` the state
+  directory, its default config, and its workspace are unknown, but
+  `~/.agents/skills` and an absolute `OPENCLAW_WORKSPACE_DIR` are still
+  scanned). An absolute
   `OPENCLAW_HOME` is used even when the OS home is unset or relative; only the
   personal skills root under the OS home (`~/.agents/skills`) is then unknown.
 - State: `OPENCLAW_STATE_DIR` (leading `~` expanded to OpenClaw's home), else
@@ -97,7 +100,8 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   and `~/.config/openclaw/gateway.env` are still read) and keeps its findings,
   but a check that would pass is reported unknown.
   Hardlinked include files are refused, as OpenClaw's guarded open does, and
-  include merges that would copy more than 2,000,000 entries are treated as
+  a config whose merges and retained content (every array item and object key
+  kept, including included files) exceed 2,000,000 entries is treated as
   unreadable. Outside include merges only `__proto__` is dropped.
 - Gateway credentials count as available only when `OPENCLAW_GATEWAY_TOKEN` or
   `OPENCLAW_GATEWAY_PASSWORD` is set in one of the `.env` files OpenClaw loads
@@ -118,7 +122,8 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   `node_modules/.bin` shim pointing at its sibling package) is resolved and
   the adjacent `openclaw` metadata is read without executing OpenClaw. As in
   OpenClaw's launcher, `dist/build-info.json` wins over package.json so the
-  version describes the built runtime rather than newer unbuilt source. Only
+  version describes the built runtime rather than newer unbuilt source. Shim and
+  metadata files over 1 MiB are not read, so the version is then unknown. Only
   the `openclaw` that Windows would run is graded. `PATH` entries are read as
   cmd.exe reads them (quotes stripped, empty entries skipped); the first folder
   holding `openclaw<ext>` for an extension in `PATHEXT` (Windows' default list
@@ -142,7 +147,11 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   for port-forwarding compatibility.
 - `lan` binds to `0.0.0.0`.
 - `gateway.tailscale.mode: "serve"` exposes the gateway to the tailnet through
-  Tailscale Serve even though the process stays bound to loopback.
+  Tailscale Serve even though the process stays bound to loopback. With
+  `gateway.auth.mode: "none"` and without `gateway.auth.allowTailscale: true`
+  (Tailscale identity), OpenClaw's own audit (`gateway.loopback_no_auth`)
+  treats it as unauthenticated, so it is graded critical; `allowTailscale`
+  must be a boolean.
 - `gateway.tailscale.mode: "funnel"` exposes the gateway to the public internet
   through Tailscale Funnel while the process stays bound to loopback. OpenClaw
   requires password authentication for this mode and refuses to start without

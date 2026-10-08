@@ -12,6 +12,7 @@ interface OpenClawConfig {
     };
     auth?: {
       mode?: unknown;
+      allowTailscale?: unknown;
       token?: unknown;
       password?: unknown;
       trustedProxy?: {
@@ -90,6 +91,16 @@ function assessTailscaleExposure(
     return undefined;
   }
   if (mode === "serve") {
+    // OpenClaw's audit (gateway.loopback_no_auth at b8324c64) counts Serve as
+    // authenticated only with gateway auth or Tailscale identity (allowTailscale).
+    if (auth === "none" && config.gateway?.auth?.allowTailscale !== true) {
+      return {
+        grade: "critical",
+        bind: "tailscale serve (tailnet)",
+        auth,
+        summary: "Gateway is reachable from the tailnet via Tailscale Serve without authentication.",
+      };
+    }
     return {
       grade: "warning",
       bind: "tailscale serve (tailnet)",

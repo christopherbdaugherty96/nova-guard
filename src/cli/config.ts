@@ -155,6 +155,7 @@ function hasLoadableShape(config: unknown): boolean {
         (oneOf(auth.mode, ["none", "token", "password", "trusted-proxy"]) &&
           secret(auth.token) &&
           secret(auth.password) &&
+          (auth.allowTailscale === undefined || typeof auth.allowTailscale === "boolean") &&
           section(auth.trustedProxy) &&
           (!isPlainObject(auth.trustedProxy) || text(auth.trustedProxy.userHeader))))
     );
@@ -267,9 +268,15 @@ export function loadOpenClawConfig(
   };
 
   const process = (value: unknown, basePath: string, visited: ReadonlySet<string>, depth: number): unknown => {
-    if (Array.isArray(value)) return value.map((item) => process(item, basePath, visited, depth));
+    // Every array item and object key kept is charged, so included content
+    // that is retained without any merge (one target per key) is bounded too.
+    if (Array.isArray(value)) {
+      charge(budget, value.length);
+      return value.map((item) => process(item, basePath, visited, depth));
+    }
     if (!isPlainObject(value)) return value;
     if (!Object.hasOwn(value, includeKey)) {
+      charge(budget, Object.keys(value).length);
       const out: Record<string, unknown> = {};
       for (const [key, entry] of Object.entries(value)) {
         if (key !== "__proto__") out[key] = process(entry, basePath, visited, depth);
