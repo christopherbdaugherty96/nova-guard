@@ -1368,3 +1368,35 @@ test("oversized Windows shim and metadata files are not read", async () => {
     assert.equal(await probe(), undefined);
   });
 });
+
+// ------------------------------------------------------------- review round 15
+
+test("on POSIX only PATH is the search path; a mixed-case Path is ignored", posixOnly, async () => {
+  await tempRoot(async (root) => {
+    const bin = path.join(root, "bin");
+    fakeOpenClaw(bin, `console.log("OpenClaw 2026.9.8");`);
+    assert.equal(await probeOpenClawVersion({ env: { Path: bin } }), undefined);
+    assert.equal(await probeOpenClawVersion({ env: { PATH: bin } }), "OpenClaw 2026.9.8");
+  });
+});
+
+test("Windows metadata that is not a regular file is never opened in a way that blocks", posixOnly, async () => {
+  await tempRoot((root) => {
+    const npm = path.join(root, "npm");
+    write(path.join(npm, "openclaw.mjs"), 'throw new Error("must not execute");\n');
+    write(path.join(npm, "openclaw.cmd"), npmCmdShim("openclaw.mjs"));
+    // A FIFO in place of package.json: a blocking read would hang forever.
+    execFileSync("mkfifo", [path.join(npm, "package.json")]);
+    const probeModule = pathToFileURL(path.join(repo, "src", "cli", "version-probe.ts")).href;
+    const script = `const { probeOpenClawVersion } = await import(${JSON.stringify(probeModule)});
+const v = await probeOpenClawVersion({ env: { PATH: ${JSON.stringify(npm)} }, platform: "win32" });
+console.log(JSON.stringify(v ?? null));`;
+    const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+      cwd: repo,
+      encoding: "utf8",
+      timeout: 15_000,
+    });
+    assert.equal(result.signal, null, "the probe blocked on a FIFO");
+    assert.equal(result.stdout.trim(), "null", result.stderr);
+  });
+});
