@@ -103,13 +103,16 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   only presence is checked, never the value.
 - An invalid `OPENCLAW_PROFILE` makes OpenClaw refuse to resolve the default
   workspace, so risky skills are then unknown.
-- On POSIX, `openclaw --version` is run without a shell from the first absolute `PATH`
-  entry holding an executable `openclaw` (empty or relative entries would mean
-  the current directory), and its environment's `PATH` keeps only absolute
+- On POSIX, `openclaw --version` is run without a shell from the first `PATH`
+  entry holding an executable `openclaw`; an empty or relative entry before it
+  means a working directory nova-guard cannot know, so the version is then
+  unknown and nothing runs. The probe's own `PATH` keeps only absolute
   entries (npm's bin runs `#!/usr/bin/env node`). Standard output is capped at
   4 KiB, with a 10-second hard timeout. On POSIX it runs in its own process
   group, which is killed whenever the probe ends, so nothing it started
-  survives. On Windows, npm's `openclaw.cmd` shim (global, or a project's
+  survives. On Windows, npm's `openclaw.cmd` shim (exactly as npm's
+  cmd-shim writes it for OpenClaw's `#!/usr/bin/env node` bin; any other
+  content could launch something else, so the version is unknown) (global, or a project's
   `node_modules/.bin` shim pointing at its sibling package) is resolved and
   the adjacent `openclaw` metadata is read without executing OpenClaw. As in
   OpenClaw's launcher, `dist/build-info.json` wins over package.json so the

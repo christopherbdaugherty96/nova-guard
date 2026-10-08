@@ -30,9 +30,42 @@ export interface VersionProbeOptions {
   platform?: NodeJS.Platform;
 }
 
-/** The script an npm `.cmd` shim runs, if it is a plain npm shim under its own directory. */
+// The exact openclaw.cmd npm's cmd-shim writes for a `#!/usr/bin/env node`
+// bin (OpenClaw's openclaw.mjs), with the script path as the only variable.
+const npmCmdShimPattern = new RegExp(
+  "^" +
+    [
+      "@ECHO off",
+      "GOTO start",
+      ":find_dp0",
+      "SET dp0=%~dp0",
+      "EXIT /b",
+      ":start",
+      "SETLOCAL",
+      "CALL :find_dp0",
+      "",
+      'IF EXIST "%dp0%\\node.exe" (',
+      '  SET "_prog=%dp0%\\node.exe"',
+      ") ELSE (",
+      '  SET "_prog=node"',
+      "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+      ")",
+      "",
+      'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\',
+    ]
+      .join("\r\n")
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+    '([^"%\\r\\n]+\\.(?:m?js|cjs))" %\\*\\r\\n$',
+);
+
+/**
+ * The script an npm `.cmd` shim runs, if the shim is exactly what npm's
+ * cmd-shim writes and its script lies under its own directory (or, for a
+ * project's node_modules/.bin shim, in node_modules). Anything else could run
+ * something other than the script whose metadata would be read.
+ */
 export function npmShimScript(shimText: string, shimDir: string): string | undefined {
-  const match = /"%dp0%\\([^"%]+\.(?:m?js|cjs))"/i.exec(shimText);
+  const match = npmCmdShimPattern.exec(shimText);
   if (!match?.[1]) return undefined;
   const script = path.resolve(shimDir, ...match[1].split("\\"));
   // A global shim's script lives under its own directory; a project-local
@@ -53,11 +86,6 @@ function isFile(file: string): boolean {
   }
 }
 
-function pathDirs(env: NodeJS.ProcessEnv): string[] {
-  const raw = env.PATH ?? env.Path ?? "";
-  return raw.split(path.delimiter).filter((dir) => dir.trim() !== "" && path.isAbsolute(dir));
-}
-
 /**
  * The probe's environment, with PATH reduced to its absolute entries: npm's
  * `openclaw` bin starts with `#!/usr/bin/env node`, and `env` would otherwise
@@ -72,7 +100,10 @@ function probeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 function posixCommand(env: NodeJS.ProcessEnv): { command: string; args: string[] } | undefined {
-  for (const dir of pathDirs(env)) {
+  for (const dir of (env.PATH ?? env.Path ?? "").split(path.delimiter)) {
+    // An empty or relative entry means a working directory; the gateway's is
+    // unknown, so an openclaw found after one may not be the one that runs.
+    if (dir.trim() === "" || !path.isAbsolute(dir)) return undefined;
     const candidate = path.join(dir, "openclaw");
     if (!isFile(candidate)) continue;
     try {

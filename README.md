@@ -79,7 +79,8 @@ node dist/cli.js check        # or: npx nova-guard check, once published
 `OPENCLAW_PROFILE`, `OPENCLAW_INCLUDE_ROOTS`, else `~/.openclaw`), reads the
 config and its `$include` files, checks the installed version, runs the four
 checks, and prints the report card. On POSIX the version comes from
-`openclaw --version` (no shell, only absolute `PATH` entries, at most 10
+`openclaw --version` (no shell, unknown if an empty or relative `PATH` entry
+comes first, at most 10
 seconds, then killed with anything it started). On Windows the npm shim is
 resolved and the adjacent `openclaw` build metadata (falling back to its package
 metadata) is read without executing OpenClaw, but only when that shim is the
