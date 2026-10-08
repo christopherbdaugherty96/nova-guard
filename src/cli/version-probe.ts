@@ -95,13 +95,21 @@ function windowsPackageVersion(env: NodeJS.ProcessEnv): string | undefined {
       const script = npmShimScript(text, dir);
       if (!script || !isFile(script)) return undefined;
       try {
-        const pkg = JSON.parse(readFileSync(path.join(path.dirname(script), "package.json"), "utf8")) as {
+        const packageRoot = path.dirname(script);
+        const pkg = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")) as {
           name?: unknown;
           version?: unknown;
         };
-        return pkg.name === "openclaw" && typeof pkg.version === "string" && pkg.version.trim() !== ""
-          ? pkg.version.trim()
-          : undefined;
+        if (pkg.name !== "openclaw") return undefined;
+        try {
+          const build = JSON.parse(readFileSync(path.join(packageRoot, "dist", "build-info.json"), "utf8")) as {
+            version?: unknown;
+          };
+          if (typeof build.version === "string" && build.version.trim() !== "") return build.version.trim();
+        } catch {
+          // OpenClaw's launcher falls back to package.json when build metadata is absent or unreadable.
+        }
+        return typeof pkg.version === "string" && pkg.version.trim() !== "" ? pkg.version.trim() : undefined;
       } catch {
         return undefined;
       }

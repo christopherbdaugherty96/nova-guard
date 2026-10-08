@@ -111,8 +111,10 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   group, which is killed whenever the probe ends, so nothing it started
   survives. On Windows, npm's `openclaw.cmd` shim (global, or a project's
   `node_modules/.bin` shim pointing at its sibling package) is resolved and
-  the adjacent `openclaw` package.json version is read without executing
-  OpenClaw. A Windows executable install without that npm metadata is unknown;
+  the adjacent `openclaw` metadata is read without executing OpenClaw. As in
+  OpenClaw's launcher, `dist/build-info.json` wins over package.json so the
+  version describes the built runtime rather than newer unbuilt source. A
+  Windows executable install without that npm metadata is unknown;
   this avoids starting a process tree that Node cannot reliably retain after
   the direct child exits.
 

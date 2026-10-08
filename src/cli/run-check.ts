@@ -125,11 +125,19 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     includeRoots: locations.includeRoots,
     agentDirs: extraAgentDirs,
   });
-  if (unverifiableAgentDirs > 0 && secrets.grade === "pass") {
+  if (unverifiableAgentDirs > 0) {
+    const unresolvedModels = Array.from({ length: unverifiableAgentDirs }, (_, index) =>
+      path.join(locations.stateDir, "agents", `unresolved-${index + 1}`, "models.json"),
+    );
     secrets = {
       ...secrets,
-      grade: "unknown",
-      summary: "An agent directory could not be resolved, so plaintext secrets could not be ruled out.",
+      unreadable: [...secrets.unreadable, ...unresolvedModels],
+      ...(secrets.grade === "pass"
+        ? {
+            grade: "unknown" as const,
+            summary: "An agent directory could not be resolved, so plaintext secrets could not be ruled out.",
+          }
+        : {}),
     };
   }
   let skills = assessRiskySkills(
