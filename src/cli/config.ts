@@ -31,6 +31,8 @@ const blockedKeys = new Set(["__proto__", "constructor", "prototype"]);
 // quadratic time (in OpenClaw too); past this many copied entries the config
 // is treated as unreadable instead.
 const maxMergeWork = 2_000_000;
+// Retained string content is bounded separately, in characters.
+const maxRetainedChars = 32 * 1024 * 1024;
 
 class IncludeRejected extends Error {}
 
@@ -70,6 +72,7 @@ function isSecretRef(value: unknown): boolean {
 
 interface MergeBudget {
   work: number;
+  chars?: number;
 }
 
 function charge(budget: MergeBudget, amount: number): void {
@@ -274,9 +277,16 @@ export function loadOpenClawConfig(
       charge(budget, value.length);
       return value.map((item) => process(item, basePath, visited, depth));
     }
+    if (typeof value === "string") {
+      budget.chars = (budget.chars ?? 0) + value.length;
+      if (budget.chars > maxRetainedChars) throw new IncludeRejected();
+      return value;
+    }
     if (!isPlainObject(value)) return value;
     if (!Object.hasOwn(value, includeKey)) {
       charge(budget, Object.keys(value).length);
+      budget.chars = (budget.chars ?? 0) + Object.keys(value).reduce((sum, key) => sum + key.length, 0);
+      if (budget.chars > maxRetainedChars) throw new IncludeRejected();
       const out: Record<string, unknown> = {};
       for (const [key, entry] of Object.entries(value)) {
         if (key !== "__proto__") out[key] = process(entry, basePath, visited, depth);

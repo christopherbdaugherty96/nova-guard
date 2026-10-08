@@ -101,8 +101,8 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   but a check that would pass is reported unknown.
   Hardlinked include files are refused, as OpenClaw's guarded open does, and
   a config whose merges and retained content (every array item and object key
-  kept, including included files) exceed 2,000,000 entries is treated as
-  unreadable. Outside include merges only `__proto__` is dropped.
+  kept, including included files) exceed 2,000,000 entries, or whose retained
+  strings and keys exceed 32 Mi characters, is treated as unreadable. Outside include merges only `__proto__` is dropped.
 - Gateway credentials count as available only when `OPENCLAW_GATEWAY_TOKEN` or
   `OPENCLAW_GATEWAY_PASSWORD` is set in one of the `.env` files OpenClaw loads
   (`~/.config/openclaw/gateway.env` only with the default state directory);
@@ -123,7 +123,9 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   `node_modules/.bin` shim pointing at its sibling package) is resolved and
   the adjacent `openclaw` metadata is read without executing OpenClaw. As in
   OpenClaw's launcher, `dist/build-info.json` wins over package.json so the
-  version describes the built runtime rather than newer unbuilt source. Shim and
+  version describes the built runtime rather than newer unbuilt source. The
+  metadata is read beside the script's real path, since Node runs a symlinked
+  script from its target. Shim and
   metadata files are opened once without blocking and read only up to 1 MiB;
   anything larger, or not a regular file, makes the version unknown (a
   `build-info.json` that is not a regular file falls back to package.json, as

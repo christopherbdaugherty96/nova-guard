@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { accessSync, closeSync, constants, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { accessSync, closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -238,7 +238,14 @@ function windowsPackageVersion(env: NodeJS.ProcessEnv): string | undefined {
     }
     const shimTarget = npmShimTarget(text, dir);
     if (!shimTarget || !isFile(shimTarget.script)) return undefined;
-    const { script } = shimTarget;
+    // Node runs a symlinked main script from its real path, so the metadata
+    // describing what runs sits beside the real path.
+    let script: string;
+    try {
+      script = realpathSync(shimTarget.script);
+    } catch {
+      return undefined;
+    }
     if (launchers.includes(".ps1")) {
       // PowerShell runs openclaw.ps1 instead: it must be npm's own for the same script.
       let ps1: string;
