@@ -1167,3 +1167,34 @@ test("on Windows only the openclaw that PATH and PATHEXT select is graded", asyn
     assert.equal(await probe([exe, npm], { PATHEXT: ".EXE;.CMD" }), undefined);
   });
 });
+
+test("on Windows, PATH entries and launchers that could pick another openclaw make the version unknown", async () => {
+  await tempRoot(async (root) => {
+    const npm = path.join(root, "npm");
+    write(path.join(npm, "openclaw.mjs"), 'throw new Error("must not execute");\n');
+    write(path.join(npm, "openclaw.cmd"), '@ECHO off\r\n"%_prog%"  "%dp0%\\openclaw.mjs" %*\r\n');
+    write(path.join(npm, "openclaw.ps1"), "# npm shim\n");
+    write(path.join(npm, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.9.8" }));
+    const probe = (entries: string[], extra: NodeJS.ProcessEnv = {}) =>
+      probeOpenClawVersion({ env: { PATH: entries.join(path.delimiter), ...extra }, platform: "win32" });
+    const exe = path.join(root, "exe");
+    write(path.join(exe, "openclaw.exe"), "x");
+    const ps1 = path.join(root, "ps1");
+    write(path.join(ps1, "openclaw.ps1"), "x");
+
+    assert.equal(await probe([npm]), "2026.9.8");
+    assert.equal(await probe(["", npm]), "2026.9.8", "an empty entry is ignored, as cmd.exe does");
+    // A quoted entry is a real folder to cmd.exe and PowerShell.
+    assert.equal(await probe([`"${exe}"`, npm]), undefined, "quoted entry before the shim");
+    assert.equal(await probe([`"${npm}"`]), "2026.9.8", "quoted shim folder");
+    // A relative entry resolves against an unknown working directory.
+    assert.equal(await probe(["relative", npm]), undefined, "relative entry before the shim");
+    // PowerShell runs openclaw.ps1, which is not in PATHEXT.
+    assert.equal(await probe([ps1, npm]), undefined, "openclaw.ps1 earlier on PATH");
+    // CreateProcess-style callers never run .cmd; they find a later .exe.
+    assert.equal(await probe([npm, exe]), undefined, "openclaw.exe later on PATH");
+    // Environment names are case-insensitive; duplicate PATHEXT entries are harmless.
+    assert.equal(await probeOpenClawVersion({ env: { Path: npm }, platform: "win32" }), "2026.9.8");
+    assert.equal(await probe([npm], { PATHEXT: ".CMD;.cmd;.EXE" }), "2026.9.8");
+  });
+});
