@@ -82,37 +82,55 @@ function posixCommand(env: NodeJS.ProcessEnv): { command: string; args: string[]
   return undefined;
 }
 
+// Windows' default PATHEXT, used when the environment does not set one.
+const defaultPathExt = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC";
+
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  // Windows environment names are case-insensitive.
+  const key = Object.keys(env).find((candidate) => candidate.toUpperCase() === name);
+  return key === undefined ? undefined : env[key];
+}
+
 function windowsPackageVersion(env: NodeJS.ProcessEnv): string | undefined {
+  const extensions = (envValue(env, "PATHEXT") ?? defaultPathExt)
+    .split(";")
+    .map((ext) => ext.trim().toLowerCase())
+    .filter((ext) => ext.startsWith("."));
   for (const dir of pathDirs(env)) {
+    // `openclaw` runs the first PATH folder holding openclaw<ext> for an
+    // extension in PATHEXT. Only an npm .cmd shim there can be read without
+    // running OpenClaw; anything else that would run first (an .exe, .com,
+    // .bat, ...) means the installed version cannot be established: unknown.
+    const launchers = extensions.filter((ext) => isFile(path.join(dir, `openclaw${ext}`)));
+    if (launchers.length === 0) continue;
+    if (launchers.length !== 1 || launchers[0] !== ".cmd") return undefined;
     const shim = path.join(dir, "openclaw.cmd");
-    if (isFile(shim)) {
-      let text: string;
+    let text: string;
+    try {
+      text = readFileSync(shim, "utf8");
+    } catch {
+      return undefined;
+    }
+    const script = npmShimScript(text, dir);
+    if (!script || !isFile(script)) return undefined;
+    try {
+      const packageRoot = path.dirname(script);
+      const pkg = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")) as {
+        name?: unknown;
+        version?: unknown;
+      };
+      if (pkg.name !== "openclaw") return undefined;
       try {
-        text = readFileSync(shim, "utf8");
-      } catch {
-        return undefined;
-      }
-      const script = npmShimScript(text, dir);
-      if (!script || !isFile(script)) return undefined;
-      try {
-        const packageRoot = path.dirname(script);
-        const pkg = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")) as {
-          name?: unknown;
+        const build = JSON.parse(readFileSync(path.join(packageRoot, "dist", "build-info.json"), "utf8")) as {
           version?: unknown;
         };
-        if (pkg.name !== "openclaw") return undefined;
-        try {
-          const build = JSON.parse(readFileSync(path.join(packageRoot, "dist", "build-info.json"), "utf8")) as {
-            version?: unknown;
-          };
-          if (typeof build.version === "string" && build.version.trim() !== "") return build.version.trim();
-        } catch {
-          // OpenClaw's launcher falls back to package.json when build metadata is absent or unreadable.
-        }
-        return typeof pkg.version === "string" && pkg.version.trim() !== "" ? pkg.version.trim() : undefined;
+        if (typeof build.version === "string" && build.version.trim() !== "") return build.version.trim();
       } catch {
-        return undefined;
+        // OpenClaw's launcher falls back to package.json when build metadata is absent or unreadable.
       }
+      return typeof pkg.version === "string" && pkg.version.trim() !== "" ? pkg.version.trim() : undefined;
+    } catch {
+      return undefined;
     }
   }
   return undefined;

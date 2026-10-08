@@ -113,7 +113,12 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   `node_modules/.bin` shim pointing at its sibling package) is resolved and
   the adjacent `openclaw` metadata is read without executing OpenClaw. As in
   OpenClaw's launcher, `dist/build-info.json` wins over package.json so the
-  version describes the built runtime rather than newer unbuilt source. A
+  version describes the built runtime rather than newer unbuilt source. Only
+  the `openclaw` that Windows would run is graded: the first absolute `PATH`
+  folder holding `openclaw<ext>` for an extension in `PATHEXT` (Windows'
+  default list when unset) decides, and unless the only such launcher there
+  is the npm `.cmd` shim (an `.exe`, `.com`, `.bat`, ... runs first or
+  instead), the version is unknown. A
   Windows executable install without that npm metadata is unknown;
   this avoids starting a process tree that Node cannot reliably retain after
   the direct child exits.

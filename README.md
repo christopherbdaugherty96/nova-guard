@@ -82,8 +82,9 @@ checks, and prints the report card. On POSIX the version comes from
 `openclaw --version` (no shell, only absolute `PATH` entries, at most 10
 seconds, then killed with anything it started). On Windows the npm shim is
 resolved and the adjacent `openclaw` build metadata (falling back to its package
-metadata) is read without executing OpenClaw; other Windows installation forms
-report the version as unknown.
+metadata) is read without executing OpenClaw, but only when that shim is the
+`openclaw` Windows would run (first in `PATH` and `PATHEXT` order); other Windows
+installation forms report the version as unknown.
 nova-guard makes no network calls and writes nothing; on POSIX,
 `openclaw --version` is OpenClaw's own code.
 Anything it cannot verify (no OpenClaw state directory, a config or include
