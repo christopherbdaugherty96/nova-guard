@@ -17,7 +17,8 @@ export interface OpenClawLocations {
   homeDirKnown?: false;
   /** Undefined when only an absolute OPENCLAW_HOME is usable: the OS home is unknown. */
   osHomeDir: string | undefined;
-  stateDir: string;
+  /** Undefined when only an absolute config override can be resolved. */
+  stateDir: string | undefined;
   configPath: string;
   /** Undefined when OPENCLAW_PROFILE is invalid: OpenClaw then refuses to resolve it. */
   workspaceDir: string | undefined;
@@ -64,10 +65,12 @@ export function resolveOpenClawLocations(
   }
   const stateOverride = env.OPENCLAW_STATE_DIR?.trim();
   const absoluteState = stateOverride && path.isAbsolute(stateOverride) ? path.resolve(stateOverride) : undefined;
+  const configOverride = env.OPENCLAW_CONFIG_PATH?.trim();
+  const absoluteConfig = configOverride && path.isAbsolute(configOverride) ? path.resolve(configOverride) : undefined;
   const resolvedHome = rawHome !== undefined ? (explicitHome ? path.resolve(explicitHome) : undefined) : osHomeDir;
-  if (rawHome !== undefined && !resolvedHome && !absoluteState) return undefined;
+  if (rawHome !== undefined && !resolvedHome && !absoluteState && !absoluteConfig) return undefined;
   const homeDirKnown = resolvedHome !== undefined;
-  const homeDir = resolvedHome ?? (absoluteState ? path.parse(absoluteState).root : undefined);
+  const homeDir = resolvedHome ?? path.parse(absoluteState ?? absoluteConfig ?? "").root;
   if (!homeDir) return undefined;
 
   // OpenClaw's resolveUserPath: trim, expand a leading ~ to OpenClaw's home, resolve.
@@ -82,9 +85,7 @@ export function resolveOpenClawLocations(
   };
 
   const stateDir = stateOverride ? userPath(stateOverride) : homeDirKnown ? path.join(homeDir, ".openclaw") : undefined;
-  if (!stateDir) return undefined;
-  const configOverride = env.OPENCLAW_CONFIG_PATH?.trim();
-  const configPath = configOverride ? userPath(configOverride) : path.join(stateDir, "openclaw.json");
+  const configPath = configOverride ? userPath(configOverride) : stateDir ? path.join(stateDir, "openclaw.json") : undefined;
   if (!configPath) return undefined;
 
   let workspaceDir: string | undefined;
@@ -93,11 +94,11 @@ export function resolveOpenClawLocations(
   if (workspaceOverride) {
     // OpenClaw resolves this one without ~ expansion, against its own working directory.
     workspaceDir = path.isAbsolute(workspaceOverride) ? path.resolve(workspaceOverride) : undefined;
-  } else if (stateOverride) {
+  } else if (stateOverride && stateDir) {
     workspaceDir = path.join(stateDir, "workspace");
-  } else if (profile && profile.toLowerCase() !== "default") {
+  } else if (homeDirKnown && profile && profile.toLowerCase() !== "default") {
     workspaceDir = profileName.test(profile) ? path.join(homeDir, `.openclaw-${profile}`, "workspace") : undefined;
-  } else {
+  } else if (homeDirKnown) {
     workspaceDir = path.join(homeDir, ".openclaw", "workspace");
   }
 

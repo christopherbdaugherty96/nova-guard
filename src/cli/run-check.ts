@@ -59,10 +59,12 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
   const config = loadOpenClawConfig(locations.configPath, locations.includeRoots);
 
   let stateIsDirectory = false;
-  try {
-    stateIsDirectory = statSync(locations.stateDir).isDirectory();
-  } catch {
-    stateIsDirectory = false;
+  if (locations.stateDir) {
+    try {
+      stateIsDirectory = statSync(locations.stateDir).isDirectory();
+    } catch {
+      stateIsDirectory = false;
+    }
   }
   // Without OpenClaw's state directory nothing here can be verified as
   // OpenClaw's: every check still runs (an explicit config, ~/.agents/skills,
@@ -85,7 +87,7 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     // ~/.config/openclaw/gateway.env is loaded only with the default state dir
     // (OpenClaw's resolveGlobalDotEnvPaths).
     const envFiles = [
-      path.join(locations.stateDir, ".env"),
+      ...(locations.stateDir ? [path.join(locations.stateDir, ".env")] : []),
       path.join(path.dirname(locations.configPath), ".env"),
       ...(locations.defaultStateDir ? [path.join(locations.homeDir, ".config", "openclaw", "gateway.env")] : []),
     ];
@@ -130,7 +132,9 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     agentDirs: extraAgentDirs,
   });
   if (locations.homeDirKnown === false) {
-    const unresolvedHomeSecret = path.join(locations.stateDir, "unresolved-home", "gateway.env");
+    const unresolvedHomeSecret = locations.stateDir
+      ? path.join(locations.stateDir, "unresolved-home", "gateway.env")
+      : "OpenClaw home gateway.env";
     secrets = {
       ...secrets,
       unreadable: [...secrets.unreadable, unresolvedHomeSecret],
@@ -141,7 +145,9 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
   }
   if (unverifiableAgentDirs > 0) {
     const unresolvedModels = Array.from({ length: unverifiableAgentDirs }, (_, index) =>
-      path.join(locations.stateDir, "agents", `unresolved-${index + 1}`, "models.json"),
+      locations.stateDir
+        ? path.join(locations.stateDir, "agents", `unresolved-${index + 1}`, "models.json")
+        : `OpenClaw state agent ${index + 1} models.json`,
     );
     secrets = {
       ...secrets,

@@ -460,7 +460,7 @@ function unique(paths: string[]): string[] {
  * Auth-profile databases and the live process environment are not scanned.
  */
 export function assessPlaintextSecrets(
-  locations: SecretLocations,
+  locations: SecretLocations | (Omit<SecretLocations, "stateDir"> & { stateDir?: undefined }),
   reader: SecretFileReader = nodeSecretFileReader,
 ): PlaintextSecretsResult {
   const findings: SecretFinding[] = [];
@@ -494,7 +494,7 @@ export function assessPlaintextSecrets(
   };
 
   const envFiles = unique([
-    path.join(locations.stateDir, ".env"),
+    ...(locations.stateDir ? [path.join(locations.stateDir, ".env")] : []),
     path.join(path.dirname(locations.configPath), ".env"),
     ...(locations.homeDirKnown === false ? [] : [path.join(locations.homeDir, ".config", "openclaw", "gateway.env")]),
   ]);
@@ -586,14 +586,14 @@ export function assessPlaintextSecrets(
   unreadable.push(...refused);
   for (const found of configFindings.values()) findings.push(...found);
 
-  const agentsRoot = path.join(locations.stateDir, "agents");
-  const agents = reader.listDirectories(agentsRoot);
+  const agentsRoot = locations.stateDir ? path.join(locations.stateDir, "agents") : undefined;
+  const agents = agentsRoot ? reader.listDirectories(agentsRoot) : "unreadable";
   // Other agents' models.json files cannot be found, so secrets cannot be ruled out.
-  if (agents === "unreadable") unreadable.push(sanitize(agentsRoot));
+  if (agents === "unreadable") unreadable.push(sanitize(agentsRoot ?? "OpenClaw state agents"));
   const modelsFiles = unique([
-    path.join(agentsRoot, "main", "agent", "models.json"),
+    ...(agentsRoot ? [path.join(agentsRoot, "main", "agent", "models.json")] : []),
     ...(agents === "unreadable" ? [] : [...agents].sort()).map((agent) =>
-      path.join(agentsRoot, agent, "agent", "models.json"),
+      path.join(agentsRoot!, agent, "agent", "models.json"),
     ),
     ...(locations.agentDirs ?? []).map((dir) => path.join(dir, "models.json")),
   ]);

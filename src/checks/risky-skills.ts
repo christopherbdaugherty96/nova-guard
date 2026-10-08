@@ -235,7 +235,9 @@ function agentRoster(agents: Record<string, unknown>): Record<string, unknown>[]
  * that are relative or templated, which OpenClaw resolves in ways not knowable here.
  */
 export function configuredAgentDirs(
-  locations: Pick<SkillLocations, "stateDir" | "homeDir" | "homeDirKnown">,
+  locations:
+    | Pick<SkillLocations, "stateDir" | "homeDir" | "homeDirKnown">
+    | (Pick<SkillLocations, "homeDir" | "homeDirKnown"> & { stateDir?: undefined }),
   configInput: SkillConfigInput,
 ): { dirs: string[]; unverifiable: number } {
   const config = configInput.status === "ok" && isRecord(configInput.config) ? configInput.config : {};
@@ -245,7 +247,8 @@ export function configuredAgentDirs(
   for (const entry of agentRoster(agents)) {
     const configured = typeof entry.agentDir === "string" ? entry.agentDir.trim() : "";
     if (!configured) {
-      dirs.push(path.join(locations.stateDir, "agents", normalizeAgentId(entry.id), "agent"));
+      if (locations.stateDir) dirs.push(path.join(locations.stateDir, "agents", normalizeAgentId(entry.id), "agent"));
+      else unverifiable += 1;
       continue;
     }
     if (/^~(?=$|[\\/])/.test(configured) && locations.homeDirKnown === false) {
@@ -266,7 +269,7 @@ function stringList(value: unknown): string[] {
 }
 
 export function assessRiskySkills(
-  locations: SkillLocations,
+  locations: SkillLocations | (Omit<SkillLocations, "stateDir"> & { stateDir?: undefined }),
   configInput: SkillConfigInput,
   fs: SkillFs = nodeSkillFs,
   limits: {
@@ -332,7 +335,11 @@ export function assessRiskySkills(
 
   // Workspaces (src/agents/agent-scope-config.ts resolveAgentWorkspaceDir).
   // Every candidate a roster could select is included.
-  const workspaces: string[] = [locations.workspaceDir ?? path.join(locations.stateDir, "workspace")];
+  const workspaces: string[] = locations.workspaceDir
+    ? [locations.workspaceDir]
+    : locations.stateDir
+      ? [path.join(locations.stateDir, "workspace")]
+      : [];
   const defaultsWorkspace =
     typeof defaults.workspace === "string" ? userPath(defaults.workspace) : undefined;
   if (defaultsWorkspace) workspaces.push(defaultsWorkspace);
@@ -348,21 +355,29 @@ export function assessRiskySkills(
       if (resolved) workspaces.push(resolved);
     } else if (defaultsWorkspace) {
       workspaces.push(path.join(defaultsWorkspace, id));
-    } else {
+    } else if (locations.stateDir) {
       workspaces.push(path.join(locations.stateDir, `workspace-${id}`));
     }
     const agentDir = typeof entry.agentDir === "string" ? entry.agentDir.trim() : "";
-    const resolvedAgentDir = agentDir ? userPath(agentDir) : path.join(locations.stateDir, "agents", id, "agent");
+    const resolvedAgentDir = agentDir
+      ? userPath(agentDir)
+      : locations.stateDir
+        ? path.join(locations.stateDir, "agents", id, "agent")
+        : undefined;
     if (resolvedAgentDir) agentDirs.push(resolvedAgentDir);
   }
   // Agents no longer in the roster can still hold workshop skills.
-  const agentsRoot = path.join(locations.stateDir, "agents");
-  try {
-    for (const entry of [...fs.readdir(agentsRoot)].sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.isDirectory()) agentDirs.push(path.join(agentsRoot, entry.name, "agent"));
+  const agentsRoot = locations.stateDir ? path.join(locations.stateDir, "agents") : undefined;
+  if (agentsRoot) {
+    try {
+      for (const entry of [...fs.readdir(agentsRoot)].sort((a, b) => a.name.localeCompare(b.name))) {
+        if (entry.isDirectory()) agentDirs.push(path.join(agentsRoot, entry.name, "agent"));
+      }
+    } catch (error) {
+      if (!isMissing(error)) markUnknown(agentsRoot, "unreadable");
     }
-  } catch (error) {
-    if (!isMissing(error)) markUnknown(agentsRoot, "unreadable");
+  } else {
+    markUnknown("OpenClaw state agents", "unreadable");
   }
 
   const allowedTargets = stringList(load.allowSymlinkTargets)
@@ -379,7 +394,8 @@ export function assessRiskySkills(
   for (const agentDir of agentDirs) {
     roots.push({ dir: path.join(agentDir, "workshop-skills"), kind: "workshop", symlinks: "contained", container: true });
   }
-  roots.push({ dir: path.join(locations.stateDir, "skills"), kind: "managed", symlinks: "any" });
+  if (locations.stateDir) roots.push({ dir: path.join(locations.stateDir, "skills"), kind: "managed", symlinks: "any" });
+  else markUnknown("OpenClaw state skills", "unreadable");
   // OpenClaw's personal root uses the OS home; both homes are scanned.
   const personalHomes = [
     ...new Set(
