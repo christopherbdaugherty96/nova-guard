@@ -132,26 +132,26 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     agentDirs: extraAgentDirs,
   });
   if (locations.homeDirKnown === false) {
-    const unresolvedHomeSecret = locations.stateDir
-      ? path.join(locations.stateDir, "unresolved-home", "gateway.env")
-      : "OpenClaw home gateway.env";
     secrets = {
       ...secrets,
-      unreadable: [...secrets.unreadable, unresolvedHomeSecret],
+      unresolved: (secrets.unresolved ?? 0) + 1,
       ...(secrets.grade === "pass"
         ? { grade: "unknown" as const, summary: "The OpenClaw home could not be resolved, so plaintext secrets could not be ruled out." }
         : {}),
     };
   }
   if (unverifiableAgentDirs > 0) {
-    const unresolvedModels = Array.from({ length: unverifiableAgentDirs }, (_, index) =>
-      locations.stateDir
-        ? path.join(locations.stateDir, "agents", `unresolved-${index + 1}`, "models.json")
-        : `OpenClaw state agent ${index + 1} models.json`,
-    );
+    const unresolvedModels = locations.stateDir
+      ? Array.from({ length: unverifiableAgentDirs }, (_, index) =>
+          path.join(locations.stateDir!, "agents", `unresolved-${index + 1}`, "models.json"),
+        )
+      : [];
     secrets = {
       ...secrets,
       unreadable: [...secrets.unreadable, ...unresolvedModels],
+      ...(locations.stateDir
+        ? {}
+        : { unresolved: (secrets.unresolved ?? 0) + unverifiableAgentDirs }),
       ...(secrets.grade === "pass"
         ? {
             grade: "unknown" as const,

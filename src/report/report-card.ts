@@ -259,12 +259,18 @@ export function renderReportCard(input: ReportCardInput): string {
     }
     // One entry per check, so no check's unknowns can crowd out another's.
     const unreadable = secrets.unreadable;
+    const unresolved = secrets.unresolved ?? 0;
+    const unresolvedSuffix = unresolved > 0
+      ? `; a state-dependent secret location could not be resolved (${unresolved} unavailable)`
+      : "";
     if (unreadable.length === 1) {
-      unchecked.push(`Plaintext secrets: could not read ${displayPath(unreadable[0] as string)}`);
+      unchecked.push(`Plaintext secrets: could not read ${displayPath(unreadable[0] as string)}${unresolvedSuffix}`);
     } else if (unreadable.length > 1) {
       unchecked.push(
-        `Plaintext secrets: could not read ${unreadable.length} files, including ${displayPath(unreadable[0] as string)}`,
+        `Plaintext secrets: could not read ${unreadable.length} files, including ${displayPath(unreadable[0] as string)}${unresolvedSuffix}`,
       );
+    } else if (unresolved > 0) {
+      unchecked.push(`Plaintext secrets: a state-dependent secret location could not be resolved (${unresolved} unavailable)`);
     } else if (secrets.grade === "unknown") {
       unchecked.push(`Plaintext secrets: ${sanitize(secrets.summary)}`);
     }

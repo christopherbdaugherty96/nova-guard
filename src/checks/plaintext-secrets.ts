@@ -54,6 +54,8 @@ export interface PlaintextSecretsResult {
   findings: SecretFinding[];
   /** Files that exist but could not be read or parsed. */
   unreadable: string[];
+  /** Coverage gaps that are not filesystem paths and must not be path-rendered. */
+  unresolved?: number;
   /** Files that were read and checked. */
   scanned: string[];
   summary: string;
@@ -465,6 +467,7 @@ export function assessPlaintextSecrets(
 ): PlaintextSecretsResult {
   const findings: SecretFinding[] = [];
   const unreadable: string[] = [];
+  let unresolved = 0;
   const scanned: string[] = [];
 
   // A required file (an $include target) that is missing cannot be ruled out.
@@ -589,7 +592,10 @@ export function assessPlaintextSecrets(
   const agentsRoot = locations.stateDir ? path.join(locations.stateDir, "agents") : undefined;
   const agents = agentsRoot ? reader.listDirectories(agentsRoot) : "unreadable";
   // Other agents' models.json files cannot be found, so secrets cannot be ruled out.
-  if (agents === "unreadable") unreadable.push(sanitize(agentsRoot ?? "OpenClaw state agents"));
+  if (agents === "unreadable") {
+    if (agentsRoot) unreadable.push(sanitize(agentsRoot));
+    else unresolved += 1;
+  }
   const modelsFiles = unique([
     ...(agentsRoot ? [path.join(agentsRoot, "main", "agent", "models.json")] : []),
     ...(agents === "unreadable" ? [] : [...agents].sort()).map((agent) =>
@@ -611,25 +617,28 @@ export function assessPlaintextSecrets(
   scanned.splice(0, scanned.length, ...dedupe(scanned));
 
   const files = new Set(findings.map((item) => item.file)).size;
-  const unreadableNote =
-    unreadable.length === 0
+  const coverageGaps = unreadable.length + unresolved;
+  const unreadableNote = unresolved === 0
+    ? unreadable.length === 0
       ? ""
-      : `${unreadable.length} file${unreadable.length === 1 ? "" : "s"} could not be read`;
+      : `${unreadable.length} file${unreadable.length === 1 ? "" : "s"} could not be read`
+    : `${coverageGaps} location${coverageGaps === 1 ? "" : "s"} could not be checked`;
   let summary: string;
   if (findings.length > 0) {
     summary =
       `${findings.length} plaintext secret${findings.length === 1 ? "" : "s"} found in ` +
       `${files} file${files === 1 ? "" : "s"}${unreadableNote ? `; ${unreadableNote}` : ""}.`;
-  } else if (unreadable.length > 0) {
+  } else if (coverageGaps > 0) {
     summary = `${unreadableNote}; plaintext secrets could not be ruled out.`;
   } else {
     summary = "No plaintext secrets found in OpenClaw's config, .env, or models.json files.";
   }
 
   return {
-    grade: findings.length > 0 ? "warning" : unreadable.length > 0 ? "unknown" : "pass",
+    grade: findings.length > 0 ? "warning" : coverageGaps > 0 ? "unknown" : "pass",
     findings,
     unreadable,
+    ...(unresolved > 0 ? { unresolved } : {}),
     scanned,
     summary,
   };
