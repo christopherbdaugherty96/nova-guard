@@ -808,6 +808,28 @@ test("without a state directory, the global gateway.env is still scanned for pla
   });
 });
 
+test("gateway credential evidence follows first-wins dotenv file precedence", async () => {
+  await tempRoot((root) => {
+    const home = path.join(root, "home");
+    const state = path.join(root, "state");
+    const config = path.join(root, "config", "openclaw.json");
+    write(config, '{ gateway: { bind: "lan", auth: { mode: "token" } } }');
+    write(path.join(state, ".env"), "OPENCLAW_GATEWAY_TOKEN=\n");
+    write(path.join(path.dirname(config), ".env"), "OPENCLAW_GATEWAY_TOKEN=later-token\n");
+    const result = runCli(["check"], {
+      HOME: home,
+      USERPROFILE: home,
+      OPENCLAW_STATE_DIR: state,
+      OPENCLAW_CONFIG_PATH: config,
+      ...pathEnv(path.join(root, "no-bin")),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^ {2}Gateway exposure +UNKNOWN$/m, result.stdout);
+    assert.doesNotMatch(result.stdout, /^ {2}Gateway exposure +WARNING$/m, result.stdout);
+    assert.ok(!result.stdout.includes("later-token"), result.stdout);
+  });
+});
+
 test("a relative OPENCLAW_HOME is not trusted either", () => {
   const home = path.resolve(path.sep, "home", "chris");
   assert.equal(resolveOpenClawLocations({ HOME: home, OPENCLAW_HOME: "oc-home" }, () => home), undefined);
