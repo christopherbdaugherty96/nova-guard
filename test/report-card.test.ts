@@ -599,3 +599,22 @@ test("the most specific base wins, so an agent directory never exposes a narrowe
     assert.doesNotMatch(card, /acme/, card);
   }
 });
+
+test("a nested configured agent directory is fully redacted", () => {
+  const nested = path.join(stateDir, "agents", "main", "customer-acme");
+  const file = path.join(nested, "models.json");
+  const card = renderReportCard(
+    input({
+      agentDirs: [nested],
+      secrets: {
+        ...secretsPass,
+        grade: "warning",
+        findings: [{ kind: "plaintext", file, key: "OPENAI_API_KEY" }],
+        scanned: [file],
+        summary: "Plaintext secrets found.",
+      },
+    }),
+  );
+  assert.match(card, /<agent-dir>[\\/]models\.json/);
+  assert.doesNotMatch(card, /customer-acme|agents[\\/]\*[\\/]customer/);
+});

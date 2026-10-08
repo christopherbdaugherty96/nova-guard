@@ -556,6 +556,41 @@ test("on Windows the probe's process tree is killed by the system taskkill, not 
   assert.equal(windowsTreeKillCommand(4242, { SystemRoot: "Windows" }), undefined);
 });
 
+test("a Windows version probe cleans up descendants after its direct parent exits", windowsOnly, async () => {
+  await tempRoot(async (root) => {
+    const bin = path.join(root, "bin");
+    const marker = path.join(root, "child.pid");
+    fakeOpenClaw(
+      bin,
+      `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
+       const c = spawn(${JSON.stringify(process.execPath)}, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: ["ignore", "inherit", "ignore"] });
+       c.unref(); writeFileSync(${JSON.stringify(marker)}, String(c.pid)); console.log("OpenClaw 2026.9.8");`,
+    );
+
+    assert.equal(await probeOpenClawVersion({ env: pathEnv(bin), timeoutMs: 1500 }), undefined);
+    const pid = Number(readFileSync(marker, "utf8"));
+    const running = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const deadline = Date.now() + 5000;
+    while (running() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    const stillRunning = running();
+    if (stillRunning) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
+    assert.equal(stillRunning, false, "the descendant survived after the direct parent exited");
+  });
+});
+
 test("Windows tree cleanup is available only for an existing system taskkill", () => {
   assert.equal(windowsTreeKillAvailable({}, {}), false);
   assert.equal(windowsTreeKillAvailable({ SystemRoot: "C:\\definitely-missing-nova-guard" }, {}), false);
