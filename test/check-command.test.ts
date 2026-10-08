@@ -1400,3 +1400,30 @@ console.log(JSON.stringify(v ?? null));`;
     assert.equal(result.stdout.trim(), "null", result.stderr);
   });
 });
+
+// ------------------------------------------------------------- review round 16
+
+test("large included strings count toward the budget too", async () => {
+  await tempRoot((root) => {
+    const configPath = path.join(root, "openclaw.json");
+    write(path.join(root, "big.json"), JSON.stringify("x".repeat(1_000_000)));
+    const keys = Array.from({ length: 64 }, (_, index) => `"k${index}": { "$include": "./big.json" }`);
+    write(configPath, `{ ${keys.join(", ")} }`);
+    // Status only: a failing diff of the expanded config would be huge.
+    assert.equal(loadOpenClawConfig(configPath, []).status, "unreadable");
+  });
+});
+
+test("a symlinked npm script is graded by the package it really runs from", posixOnly, async () => {
+  await tempRoot(async (root) => {
+    const npm = path.join(root, "npm");
+    const old = path.join(root, "old-openclaw");
+    write(path.join(old, "openclaw.mjs"), 'throw new Error("must not execute");\n');
+    write(path.join(old, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.1.1" }));
+    write(path.join(npm, "openclaw.cmd"), npmCmdShim("openclaw.mjs"));
+    write(path.join(npm, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.9.8" }));
+    symlinkSync(path.join(old, "openclaw.mjs"), path.join(npm, "openclaw.mjs"));
+    // Node runs the symlink's target, so the version is the target package's.
+    assert.equal(await probeOpenClawVersion({ env: { PATH: npm }, platform: "win32" }), "2026.1.1");
+  });
+});
