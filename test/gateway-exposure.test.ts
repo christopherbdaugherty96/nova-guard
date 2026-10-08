@@ -304,3 +304,14 @@ test("a custom bind host OpenClaw cannot bind (not IPv4) is unknown, never pass"
   }
   assert.equal(assessGatewayExposure({ gateway: { bind: "custom", customBindHost: "127.0.0.1" } }).grade, "pass");
 });
+
+test("unauthenticated Tailscale Serve is critical unless Tailscale identity is allowed", () => {
+  // OpenClaw's own audit (gateway.loopback_no_auth) treats Serve without
+  // gateway auth or allowTailscale as unauthenticated access.
+  const none = assessGatewayExposure({ gateway: { tailscale: { mode: "serve" }, auth: { mode: "none" } } });
+  assert.equal(none.grade, "critical");
+  const identity = assessGatewayExposure({
+    gateway: { tailscale: { mode: "serve" }, auth: { mode: "none", allowTailscale: true } },
+  });
+  assert.equal(identity.grade, "warning");
+});
