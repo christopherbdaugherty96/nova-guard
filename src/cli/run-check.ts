@@ -93,11 +93,16 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
       ...(locations.configPath ? [path.join(path.dirname(locations.configPath), ".env")] : []),
       ...(locations.defaultStateDir ? [path.join(locations.homeDir, ".config", "openclaw", "gateway.env")] : []),
     ];
-    const defined = (name: string) =>
-      envFiles.some((file) => {
+    const defined = (name: string) => {
+      for (const file of envFiles) {
         const read = nodeSecretFileReader.readText(file);
-        return read.status === "ok" && (parseDotEnv(read.text).get(name)?.value.trim() ?? "") !== "";
-      });
+        if (read.status === "missing") continue;
+        if (read.status === "unreadable") return false;
+        const assignment = parseDotEnv(read.text).get(name);
+        if (assignment) return assignment.value.trim() !== "";
+      }
+      return false;
+    };
     // Detection describes the host nova-guard runs on. Inside a container that
     // settles it; outside, the gateway may still run in one (OpenClaw's Docker
     // setup mounts the host's state), so an omitted bind stays unknown.
