@@ -110,6 +110,7 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
 - An invalid `OPENCLAW_PROFILE` makes OpenClaw refuse to resolve the default
   workspace, so risky skills are then unknown.
 - On POSIX, `openclaw --version` is run without a shell from the first `PATH`
+  (exactly `PATH`: POSIX names are case-sensitive, so a `Path` is ignored)
   entry holding an executable `openclaw`; an empty or relative entry before it
   means a working directory nova-guard cannot know, so the version is then
   unknown and nothing runs. The probe's own `PATH` keeps only absolute
@@ -123,7 +124,8 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   the adjacent `openclaw` metadata is read without executing OpenClaw. As in
   OpenClaw's launcher, `dist/build-info.json` wins over package.json so the
   version describes the built runtime rather than newer unbuilt source. Shim and
-  metadata files over 1 MiB are not read, so the version is then unknown. Only
+  metadata files are opened once without blocking and read only up to 1 MiB;
+  anything larger, or not a regular file, makes the version unknown. Only
   the `openclaw` that Windows would run is graded. `PATH` entries are read as
   cmd.exe reads them (quotes stripped, empty entries skipped); the first folder
   holding `openclaw<ext>` for an extension in `PATHEXT` (Windows' default list

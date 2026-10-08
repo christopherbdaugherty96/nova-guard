@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { accessSync, constants, readFileSync, statSync } from "node:fs";
+import { accessSync, closeSync, constants, fstatSync, openSync, readSync, statSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -126,9 +126,29 @@ function npmShimTarget(shimText: string, shimDir: string): { target: string; scr
 // corrupt or hostile file cannot exhaust memory.
 const maxMetadataBytes = 1024 * 1024;
 
+class MetadataTooLarge extends Error {}
+
+// Opens the file once without blocking (a FIFO would otherwise wait for a
+// writer), checks that descriptor is a regular file, and reads at most the
+// limit plus one byte, so a file swapped or grown after any check is still
+// bounded.
 function readSmallText(file: string): string {
-  if (statSync(file).size > maxMetadataBytes) throw new Error("metadata file too large");
-  return readFileSync(file, "utf8");
+  const nonBlocking = (constants as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
+  const fd = openSync(file, constants.O_RDONLY | nonBlocking);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error("metadata is not a regular file");
+    const buffer = Buffer.alloc(maxMetadataBytes + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const read = readSync(fd, buffer, length, buffer.length - length, null);
+      if (read === 0) break;
+      length += read;
+    }
+    if (length > maxMetadataBytes) throw new MetadataTooLarge();
+    return buffer.toString("utf8", 0, length);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function isFile(file: string): boolean {
@@ -153,7 +173,8 @@ function probeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 function posixCommand(env: NodeJS.ProcessEnv): { command: string; args: string[] } | undefined {
-  for (const dir of (env.PATH ?? env.Path ?? "").split(path.delimiter)) {
+  // POSIX environment names are case-sensitive: only PATH is the search path.
+  for (const dir of (env.PATH ?? "").split(path.delimiter)) {
     // An empty or relative entry means a working directory; the gateway's is
     // unknown, so an openclaw found after one may not be the one that runs.
     if (dir.trim() === "" || !path.isAbsolute(dir)) return undefined;
@@ -238,13 +259,13 @@ function windowsPackageVersion(env: NodeJS.ProcessEnv): string | undefined {
       // OpenClaw's launcher would read an oversized build-info.json; it cannot be
       // read here, so the version is unknown rather than the package.json fallback.
       const buildInfo = path.join(packageRoot, "dist", "build-info.json");
-      if (isFile(buildInfo) && statSync(buildInfo).size > maxMetadataBytes) return undefined;
       try {
         const build = JSON.parse(readSmallText(buildInfo)) as {
           version?: unknown;
         };
         if (typeof build.version === "string" && build.version.trim() !== "") return build.version.trim();
-      } catch {
+      } catch (error) {
+        if (error instanceof MetadataTooLarge) return undefined;
         // OpenClaw's launcher falls back to package.json when build metadata is absent or unreadable.
       }
       return typeof pkg.version === "string" && pkg.version.trim() !== "" ? pkg.version.trim() : undefined;
