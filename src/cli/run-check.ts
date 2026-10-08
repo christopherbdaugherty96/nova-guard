@@ -141,17 +141,9 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     };
   }
   if (unverifiableAgentDirs > 0) {
-    const unresolvedModels = locations.stateDir
-      ? Array.from({ length: unverifiableAgentDirs }, (_, index) =>
-          path.join(locations.stateDir!, "agents", `unresolved-${index + 1}`, "models.json"),
-        )
-      : [];
     secrets = {
       ...secrets,
-      unreadable: [...secrets.unreadable, ...unresolvedModels],
-      ...(locations.stateDir
-        ? {}
-        : { unresolved: (secrets.unresolved ?? 0) + unverifiableAgentDirs }),
+      unresolved: (secrets.unresolved ?? 0) + unverifiableAgentDirs,
       ...(secrets.grade === "pass"
         ? {
             grade: "unknown" as const,
