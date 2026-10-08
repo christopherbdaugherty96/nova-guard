@@ -1122,3 +1122,48 @@ test("an absolute config override is scanned without a usable home or state dire
     assert.ok(!result.stdout.includes("letmein"), result.stdout);
   });
 });
+
+// ------------------------------------------------------------- review round 11
+
+test("on Windows only the openclaw that PATH and PATHEXT select is graded", async () => {
+  await tempRoot(async (root) => {
+    // An npm install: openclaw.cmd plus npm's own .ps1 and extensionless sh shims.
+    const npmDir = (dir: string) => {
+      write(path.join(dir, "openclaw.mjs"), 'throw new Error("must not execute");\n');
+      write(path.join(dir, "openclaw.cmd"), '@ECHO off\r\n"%_prog%"  "%dp0%\\openclaw.mjs" %*\r\n');
+      write(path.join(dir, "openclaw.ps1"), "# npm shim\n");
+      write(path.join(dir, "openclaw"), "#!/bin/sh\n");
+      write(path.join(dir, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.9.8" }));
+    };
+    const probe = (dirs: string[], extra: NodeJS.ProcessEnv = {}) =>
+      probeOpenClawVersion({ env: { PATH: dirs.join(path.delimiter), ...extra }, platform: "win32" });
+
+    const npm = path.join(root, "npm");
+    npmDir(npm);
+    const empty = path.join(root, "empty");
+    mkdirSync(empty, { recursive: true });
+    // Only the npm install on PATH (an unrelated folder first): its version.
+    assert.equal(await probe([empty, npm]), "2026.9.8");
+
+    // Another openclaw earlier on PATH is what Windows runs: unknown.
+    for (const name of ["openclaw.exe", "openclaw.com", "openclaw.bat"]) {
+      const other = path.join(root, `other-${name}`);
+      write(path.join(other, name), "x");
+      assert.equal(await probe([other, npm]), undefined, `${name} earlier on PATH`);
+    }
+    // Beside the shim, an .exe/.com/.bat precedes .cmd in PATHEXT: unknown.
+    for (const name of ["openclaw.exe", "openclaw.com", "openclaw.bat"]) {
+      const same = path.join(root, `same-${name}`);
+      npmDir(same);
+      write(path.join(same, name), "x");
+      assert.equal(await probe([same]), undefined, `${name} beside the shim`);
+    }
+    // PATHEXT decides what runs; without .CMD the shim is not what runs.
+    assert.equal(await probe([npm], { PATHEXT: ".COM;.EXE;.BAT" }), undefined);
+    assert.equal(await probe([npm], { PathExt: ".COM;.EXE;.BAT;.CMD" }), "2026.9.8");
+    // An .exe earlier on PATH under a PATHEXT that also lists it.
+    const exe = path.join(root, "exe");
+    write(path.join(exe, "openclaw.exe"), "x");
+    assert.equal(await probe([exe, npm], { PATHEXT: ".EXE;.CMD" }), undefined);
+  });
+});
