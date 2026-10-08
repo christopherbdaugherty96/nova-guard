@@ -91,9 +91,10 @@ function assessTailscaleExposure(
     return undefined;
   }
   if (mode === "serve") {
-    // OpenClaw's audit (gateway.loopback_no_auth at b8324c64) counts Serve as
-    // authenticated only with gateway auth or Tailscale identity (allowTailscale).
-    if (auth === "none" && config.gateway?.auth?.allowTailscale !== true) {
+    // In auth mode "none", OpenClaw's runtime (authorizeGatewayConnectCore at
+    // b8324c64) admits any connection before Tailscale identity is consulted,
+    // so every tailnet device can connect without authentication.
+    if (auth === "none") {
       return {
         grade: "critical",
         bind: "tailscale serve (tailnet)",

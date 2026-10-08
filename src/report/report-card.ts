@@ -364,7 +364,7 @@ export function renderReportCard(input: ReportCardInput): string {
 const gatewayFixes: [string, string][] = [
   [
     "Gateway is reachable from the tailnet via Tailscale Serve without authentication.",
-    "Turn on gateway auth (token or password), or set gateway.auth.allowTailscale to use Tailscale identity.",
+    "Turn on gateway auth (token or password; with token mode, Tailscale identity can stand in for the token via gateway.auth.allowTailscale).",
   ],
   [
     "Gateway is configured for non-loopback access without authentication.",

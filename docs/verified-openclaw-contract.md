@@ -148,10 +148,15 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
 - `lan` binds to `0.0.0.0`.
 - `gateway.tailscale.mode: "serve"` exposes the gateway to the tailnet through
   Tailscale Serve even though the process stays bound to loopback. With
-  `gateway.auth.mode: "none"` and without `gateway.auth.allowTailscale: true`
-  (Tailscale identity), OpenClaw's own audit (`gateway.loopback_no_auth`)
-  treats it as unauthenticated, so it is graded critical; `allowTailscale`
-  must be a boolean.
+  `gateway.auth.mode: "none"` it is graded critical: OpenClaw's runtime
+  (`authorizeGatewayConnectCore`) admits any connection in that mode before
+  Tailscale identity is consulted, so `gateway.auth.allowTailscale` does not
+  help. OpenClaw's own audit stays silent here by default, because it counts
+  the default Tailscale allowance as authentication. `allowTailscale` must be
+  a boolean, as OpenClaw's schema requires. (Plain loopback with mode "none"
+  is graded pass: only the local machine can connect; OpenClaw's audit flags
+  it because a reverse proxy in front of the Control UI would expose it, which
+  a config scan cannot see.)
 - `gateway.tailscale.mode: "funnel"` exposes the gateway to the public internet
   through Tailscale Funnel while the process stays bound to loopback. OpenClaw
   requires password authentication for this mode and refuses to start without
