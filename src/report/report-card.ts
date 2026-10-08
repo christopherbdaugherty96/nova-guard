@@ -174,7 +174,7 @@ export function renderReportCard(input: ReportCardInput): string {
   const agentDirBases = (input.agentDirs ?? [])
     .filter(usable)
     .map((dir) => path.resolve(dir))
-    .filter((dir) => dir !== agentsDir && !isInside(agentsDir, dir));
+    .filter((dir) => dir !== agentsDir);
   const bases: [string, string][] = [
     ...agentDirBases.map((dir): [string, string] => [dir, "<agent-dir>"]),
     ...homes.map((home): [string, string] => [home, "~"]),
@@ -184,6 +184,17 @@ export function renderReportCard(input: ReportCardInput): string {
 
   const displayPath = (raw: string): string => {
     let file = path.resolve(raw);
+    const configuredAgent = bases
+      .filter(([base, label]) => label === "<agent-dir>" && isInside(base, file))
+      .sort((a, b) => b[0].length - a[0].length)[0];
+    const longestFixedForRaw = Math.max(
+      -1,
+      ...bases.filter(([base, label]) => label !== "<agent-dir>" && isInside(base, file)).map(([base]) => base.length),
+    );
+    if (configuredAgent && configuredAgent[0].length > longestFixedForRaw) {
+      const relative = path.relative(configuredAgent[0], file);
+      return sanitize(relative === "" ? configuredAgent[1] : [configuredAgent[1], relative].join(path.sep));
+    }
     // Agent ids are user-chosen names: <stateDir>/agents/<id>/... -> agents/*/...
     if (file !== agentsDir && isInside(agentsDir, file)) {
       const [, ...rest] = path.relative(agentsDir, file).split(path.sep);
@@ -199,12 +210,7 @@ export function renderReportCard(input: ReportCardInput): string {
     // wins, so a broader base never exposes a narrower user-chosen name.
     const fixed = bases.filter(([, label]) => label !== "<agent-dir>");
     const fixedMatch = fixed.find(([base]) => isInside(base, file));
-    const agentMatch = bases
-      .filter(([base, label]) => label === "<agent-dir>" && isInside(base, file))
-      .sort((a, b) => b[0].length - a[0].length)[0];
-    const longestFixed = Math.max(-1, ...fixed.filter(([base]) => isInside(base, file)).map(([base]) => base.length));
-    const chosen = agentMatch && agentMatch[0].length > longestFixed ? agentMatch : fixedMatch;
-    const shortened = (chosen ? shorten(chosen[0], chosen[1]) : undefined) ?? file;
+    const shortened = (fixedMatch ? shorten(fixedMatch[0], fixedMatch[1]) : undefined) ?? file;
     return sanitize(shortened);
   };
 

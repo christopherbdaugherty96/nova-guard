@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { loadOpenClawConfig } from "../src/cli/config.js";
 import { detectContainer } from "../src/cli/container.js";
 import { resolveOpenClawLocations } from "../src/cli/locate.js";
-import { npmShimScript, probeOpenClawVersion, windowsTreeKillAvailable, windowsTreeKillCommand } from "../src/cli/version-probe.js";
+import { npmShimScript, probeOpenClawVersion } from "../src/cli/version-probe.js";
 import { toolVersion } from "../src/version.js";
 
 const posixOnly = { skip: process.platform === "win32" };
@@ -214,7 +214,7 @@ test("container detection mirrors OpenClaw's signals", () => {
 
 // ------------------------------------------------------------------ version
 
-function fakeOpenClaw(dir: string, body: string) {
+function fakeOpenClaw(dir: string, body: string, packageVersion?: string) {
   mkdirSync(dir, { recursive: true });
   const script = path.join(dir, "openclaw-entry.mjs");
   writeFileSync(script, body);
@@ -224,6 +224,7 @@ function fakeOpenClaw(dir: string, body: string) {
       path.join(dir, "openclaw.cmd"),
       `@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n"%_prog%"  "%dp0%\\openclaw-entry.mjs" %*\r\n`,
     );
+    if (packageVersion) writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "openclaw", version: packageVersion }));
   } else {
     const bin = path.join(dir, "openclaw");
     writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`);
@@ -236,8 +237,11 @@ const pathEnv = (dir: string) => ({ PATH: dir, Path: dir, SYSTEMROOT: process.en
 test("openclaw --version is read from the executable on PATH", async () => {
   await tempRoot(async (root) => {
     const bin = path.join(root, "bin");
-    fakeOpenClaw(bin, `if (process.argv[2] === "--version") console.log("OpenClaw 2026.9.8 (abc1234)");`);
-    assert.equal(await probeOpenClawVersion({ env: pathEnv(bin) }), "OpenClaw 2026.9.8 (abc1234)");
+    fakeOpenClaw(bin, `if (process.argv[2] === "--version") console.log("OpenClaw 2026.9.8 (abc1234)");`, "2026.9.8");
+    assert.equal(
+      await probeOpenClawVersion({ env: pathEnv(bin) }),
+      process.platform === "win32" ? "2026.9.8" : "OpenClaw 2026.9.8 (abc1234)",
+    );
   });
 });
 
@@ -296,7 +300,7 @@ test("nova-guard check renders the report card from a real OpenClaw layout, read
     const home = path.join(root, "home");
     const state = path.join(home, ".openclaw");
     const bin = path.join(root, "bin");
-    fakeOpenClaw(bin, `if (process.argv[2] === "--version") console.log("OpenClaw 2026.9.8 (abc1234)");`);
+    fakeOpenClaw(bin, `if (process.argv[2] === "--version") console.log("OpenClaw 2026.9.8 (abc1234)");`, "2026.9.8");
     write(path.join(state, "openclaw.json"), `{ gateway: { bind: "loopback", auth: { mode: "token" } }, $include: "./more.json5" }`);
     write(path.join(state, "more.json5"), `{ channels: { telegram: { botToken: "letmein-telegram-value" } } }`);
     write(path.join(state, ".env"), "OPENAI_API_KEY=letmein-openai-value\n");
@@ -474,7 +478,7 @@ test("a relative or empty PATH entry is never searched for openclaw", posixOnly,
   });
 });
 
-test("a timed-out openclaw is killed with its descendants, on every platform", async () => {
+test("a timed-out POSIX openclaw is killed with its descendants; Windows does not execute it", async () => {
   await tempRoot(async (root) => {
     const bin = path.join(root, "bin");
     const marker = path.join(root, "child.pid");
@@ -485,6 +489,10 @@ test("a timed-out openclaw is killed with its descendants, on every platform", a
        writeFileSync(${JSON.stringify(marker)}, String(c.pid)); setInterval(() => {}, 1000);`,
     );
     assert.equal(await probeOpenClawVersion({ env: pathEnv(bin), timeoutMs: 1500 }), undefined);
+    if (process.platform === "win32") {
+      assert.equal(statSync(marker, { throwIfNoEntry: false }), undefined, "the Windows version probe started");
+      return;
+    }
     const pid = Number(readFileSync(marker, "utf8"));
     const running = () => {
       if (process.platform === "win32") {
@@ -545,18 +553,7 @@ test("the package builds before it is packed or installed from git", () => {
   assert.equal(pkg.scripts.prepare, "npm run build");
 });
 
-test("on Windows the probe's process tree is killed by the system taskkill, not via a shell or PATH", () => {
-  const systemRoot = "C:\\Windows";
-  assert.deepEqual(windowsTreeKillCommand(4242, { SystemRoot: systemRoot }), {
-    command: path.win32.join(systemRoot, "System32", "taskkill.exe"),
-    args: ["/PID", "4242", "/T", "/F"],
-  });
-  // Without a trustworthy absolute SystemRoot there is no tree kill to run.
-  assert.equal(windowsTreeKillCommand(4242, {}), undefined);
-  assert.equal(windowsTreeKillCommand(4242, { SystemRoot: "Windows" }), undefined);
-});
-
-test("a Windows version probe cleans up descendants after its direct parent exits", windowsOnly, async () => {
+test("a Windows version check never launches code that could leave descendants", windowsOnly, async () => {
   await tempRoot(async (root) => {
     const bin = path.join(root, "bin");
     const marker = path.join(root, "child.pid");
@@ -566,8 +563,9 @@ test("a Windows version probe cleans up descendants after its direct parent exit
        const c = spawn(${JSON.stringify(process.execPath)}, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: ["ignore", "inherit", "ignore"] });
        c.unref(); writeFileSync(${JSON.stringify(marker)}, String(c.pid)); console.log("OpenClaw 2026.9.8");`,
     );
-
     assert.equal(await probeOpenClawVersion({ env: pathEnv(bin), timeoutMs: 1500 }), undefined);
+    const markerStat = statSync(marker, { throwIfNoEntry: false });
+    if (!markerStat) return;
     const pid = Number(readFileSync(marker, "utf8"));
     const running = () => {
       try {
@@ -591,13 +589,7 @@ test("a Windows version probe cleans up descendants after its direct parent exit
   });
 });
 
-test("Windows tree cleanup is available only for an existing system taskkill", () => {
-  assert.equal(windowsTreeKillAvailable({}, {}), false);
-  assert.equal(windowsTreeKillAvailable({ SystemRoot: "C:\\definitely-missing-nova-guard" }, {}), false);
-  assert.equal(windowsTreeKillAvailable({ SystemRoot: "C:\\Windows" }, {}, () => true), true);
-});
-
-test("on Windows the probe does not start without a trusted system taskkill", windowsOnly, async () => {
+test("on Windows the version comes from npm metadata without starting OpenClaw", windowsOnly, async () => {
   await tempRoot(async (root) => {
     const bin = path.join(root, "bin");
     const script = path.join(bin, "openclaw-entry.mjs");
@@ -605,27 +597,10 @@ test("on Windows the probe does not start without a trusted system taskkill", wi
     mkdirSync(bin, { recursive: true });
     writeFileSync(script, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "started");\nconsole.log("OpenClaw 2026.9.8");\n`);
     writeFileSync(path.join(bin, "openclaw.cmd"), `@ECHO off\r\n"%_prog%"  "%dp0%\\openclaw-entry.mjs" %*\r\n`);
+    writeFileSync(path.join(bin, "package.json"), JSON.stringify({ name: "openclaw", version: "2026.9.8" }));
 
-    assert.equal(
-      await probeOpenClawVersion({ env: { PATH: bin, SystemRoot: "C:\\Windows" }, platform: "win32" }),
-      "OpenClaw 2026.9.8",
-    );
-    assert.ok(statSync(marker, { throwIfNoEntry: false }), "the control probe did not start");
-    rmSync(marker);
-
-    const savedSystemRoot = process.env.SystemRoot;
-    const savedUpperSystemRoot = process.env.SYSTEMROOT;
-    delete process.env.SystemRoot;
-    delete process.env.SYSTEMROOT;
-    try {
-      assert.equal(await probeOpenClawVersion({ env: { PATH: bin }, platform: "win32" }), undefined);
-      assert.equal(statSync(marker, { throwIfNoEntry: false }), undefined, "the version probe started");
-    } finally {
-      if (savedSystemRoot === undefined) delete process.env.SystemRoot;
-      else process.env.SystemRoot = savedSystemRoot;
-      if (savedUpperSystemRoot === undefined) delete process.env.SYSTEMROOT;
-      else process.env.SYSTEMROOT = savedUpperSystemRoot;
-    }
+    assert.equal(await probeOpenClawVersion({ env: { PATH: bin }, platform: "win32" }), "2026.9.8");
+    assert.equal(statSync(marker, { throwIfNoEntry: false }), undefined, "the version probe started");
   });
 });
 
@@ -893,7 +868,7 @@ test("an absent state directory keeps every check from passing, even with an exp
     const configPath = path.join(root, "conf", "openclaw.json");
     write(configPath, `{ gateway: { bind: "loopback", auth: { mode: "token" } } }`);
     const bin = path.join(root, "bin");
-    fakeOpenClaw(bin, `if (process.argv[2] === "--version") console.log("OpenClaw 2026.9.8 (abc1234)");`);
+    fakeOpenClaw(bin, `if (process.argv[2] === "--version") console.log("OpenClaw 2026.9.8 (abc1234)");`, "2026.9.8");
     const result = runCli(["check"], {
       HOME: home,
       USERPROFILE: home,

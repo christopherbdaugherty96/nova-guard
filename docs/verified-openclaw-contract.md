@@ -103,20 +103,18 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   only presence is checked, never the value.
 - An invalid `OPENCLAW_PROFILE` makes OpenClaw refuse to resolve the default
   workspace, so risky skills are then unknown.
-- `openclaw --version` is run without a shell from the first absolute `PATH`
+- On POSIX, `openclaw --version` is run without a shell from the first absolute `PATH`
   entry holding an executable `openclaw` (empty or relative entries would mean
   the current directory), and its environment's `PATH` keeps only absolute
   entries (npm's bin runs `#!/usr/bin/env node`). Standard output is capped at
   4 KiB, with a 10-second hard timeout. On POSIX it runs in its own process
   group, which is killed whenever the probe ends, so nothing it started
-  survives. On Windows a timed-out probe's tree is ended with
-  `%SystemRoot%\System32\taskkill.exe /T /F` (absolute path, no shell) while
-  the probe still runs, before anything else; after a clean exit nothing is
-  killed, since its PID may already be reused. If no absolute system
-  `taskkill.exe` path can be established, the Windows version probe is not
-  started and the version is unknown. On Windows, npm's `openclaw.cmd` shim (global, or a project's
-  `node_modules/.bin` shim pointing at its sibling package) is resolved to its
-  script, which is run with Node.
+  survives. On Windows, npm's `openclaw.cmd` shim (global, or a project's
+  `node_modules/.bin` shim pointing at its sibling package) is resolved and
+  the adjacent `openclaw` package.json version is read without executing
+  OpenClaw. A Windows executable install without that npm metadata is unknown;
+  this avoids starting a process tree that Node cannot reliably retain after
+  the direct child exits.
 
 ## Gateway
 

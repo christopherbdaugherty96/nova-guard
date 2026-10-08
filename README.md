@@ -77,10 +77,14 @@ node dist/cli.js check        # or: npx nova-guard check, once published
 `nova-guard check` finds OpenClaw the way OpenClaw does (`OPENCLAW_HOME`,
 `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `OPENCLAW_WORKSPACE_DIR`,
 `OPENCLAW_PROFILE`, `OPENCLAW_INCLUDE_ROOTS`, else `~/.openclaw`), reads the
-config and its `$include` files, runs `openclaw --version` (no shell, only
-from absolute `PATH` entries and with only those in its `PATH`, at most 10
-seconds, then killed with anything it started), runs the four checks, and prints the report card. nova-guard makes no
-network calls and writes nothing; `openclaw --version` is OpenClaw's own code.
+config and its `$include` files, checks the installed version, runs the four
+checks, and prints the report card. On POSIX the version comes from
+`openclaw --version` (no shell, only absolute `PATH` entries, at most 10
+seconds, then killed with anything it started). On Windows the npm shim is
+resolved and the adjacent `openclaw` package metadata is read without executing
+OpenClaw; other Windows installation forms report the version as unknown.
+nova-guard makes no network calls and writes nothing; on POSIX,
+`openclaw --version` is OpenClaw's own code.
 Anything it cannot verify (no OpenClaw state directory, a config or include
 OpenClaw would reject in the fields the checks read, no version output) is
 reported as unknown, never as pass. It does not reimplement OpenClaw's whole
