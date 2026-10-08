@@ -114,17 +114,31 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
   let unverifiableAgentDirs = agentDirs.unverifiable;
   const overrideDir = deps.env.OPENCLAW_AGENT_DIR?.trim() || deps.env.PI_CODING_AGENT_DIR?.trim();
   if (overrideDir) {
-    const expanded = overrideDir.replace(/^~(?=$|[\\/])/, () => locations.homeDir);
-    if (path.isAbsolute(expanded)) extraAgentDirs.push(path.resolve(expanded));
+    const needsHome = /^~(?=$|[\\/])/.test(overrideDir);
+    const expanded = needsHome && locations.homeDirKnown !== false
+      ? overrideDir.replace(/^~(?=$|[\\/])/, () => locations.homeDir)
+      : overrideDir;
+    if ((!needsHome || locations.homeDirKnown !== false) && path.isAbsolute(expanded)) extraAgentDirs.push(path.resolve(expanded));
     else unverifiableAgentDirs += 1;
   }
   let secrets = assessPlaintextSecrets({
     stateDir: locations.stateDir,
     configPath: locations.configPath,
     homeDir: locations.homeDir,
+    ...(locations.homeDirKnown === false ? { homeDirKnown: false as const } : {}),
     includeRoots: locations.includeRoots,
     agentDirs: extraAgentDirs,
   });
+  if (locations.homeDirKnown === false) {
+    const unresolvedHomeSecret = path.join(locations.stateDir, "unresolved-home", "gateway.env");
+    secrets = {
+      ...secrets,
+      unreadable: [...secrets.unreadable, unresolvedHomeSecret],
+      ...(secrets.grade === "pass"
+        ? { grade: "unknown" as const, summary: "The OpenClaw home could not be resolved, so plaintext secrets could not be ruled out." }
+        : {}),
+    };
+  }
   if (unverifiableAgentDirs > 0) {
     const unresolvedModels = Array.from({ length: unverifiableAgentDirs }, (_, index) =>
       path.join(locations.stateDir, "agents", `unresolved-${index + 1}`, "models.json"),
@@ -144,6 +158,7 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     {
       stateDir: locations.stateDir,
       homeDir: locations.homeDir,
+      ...(locations.homeDirKnown === false ? { homeDirKnown: false as const } : {}),
       osHomeDir: locations.osHomeDir,
       ...(locations.workspaceDir === undefined ? {} : { workspaceDir: locations.workspaceDir }),
     },

@@ -11,7 +11,10 @@ import path from "node:path";
  * OPENCLAW_INCLUDE_ROOTS. Only environment variables are read.
  */
 export interface OpenClawLocations {
+  /** A redaction base; when homeDirKnown is false this is only the filesystem root. */
   homeDir: string;
+  /** Present only when the home is unknown but absolute overrides are usable. */
+  homeDirKnown?: false;
   /** Undefined when only an absolute OPENCLAW_HOME is usable: the OS home is unknown. */
   osHomeDir: string | undefined;
   stateDir: string;
@@ -53,14 +56,18 @@ export function resolveOpenClawLocations(
   let explicitHome: string | undefined;
   if (rawHome !== undefined) {
     if (/^~(?=$|[\\/])/.test(rawHome)) {
-      if (!osHomeDir) return undefined;
-      explicitHome = rawHome.replace(/^~(?=$|[\\/])/, () => osHomeDir);
+      if (osHomeDir) explicitHome = rawHome.replace(/^~(?=$|[\\/])/, () => osHomeDir);
     } else {
       explicitHome = rawHome;
     }
-    if (!path.isAbsolute(explicitHome)) return undefined;
+    if (explicitHome && !path.isAbsolute(explicitHome)) explicitHome = undefined;
   }
-  const homeDir = explicitHome ? path.resolve(explicitHome) : osHomeDir;
+  const stateOverride = env.OPENCLAW_STATE_DIR?.trim();
+  const absoluteState = stateOverride && path.isAbsolute(stateOverride) ? path.resolve(stateOverride) : undefined;
+  const resolvedHome = rawHome !== undefined ? (explicitHome ? path.resolve(explicitHome) : undefined) : osHomeDir;
+  if (rawHome !== undefined && !resolvedHome && !absoluteState) return undefined;
+  const homeDirKnown = resolvedHome !== undefined;
+  const homeDir = resolvedHome ?? (absoluteState ? path.parse(absoluteState).root : undefined);
   if (!homeDir) return undefined;
 
   // OpenClaw's resolveUserPath: trim, expand a leading ~ to OpenClaw's home, resolve.
@@ -68,12 +75,13 @@ export function resolveOpenClawLocations(
   // A path still relative after that resolves against the gateway's working
   // directory, which nova-guard cannot know, so it is not trusted (undefined).
   const userPath = (raw: string): string | undefined => {
-    const expanded = raw.trim().replace(/^~(?=$|[\\/])/, () => homeDir);
+    const trimmed = raw.trim();
+    if (/^~(?=$|[\\/])/.test(trimmed) && !homeDirKnown) return undefined;
+    const expanded = trimmed.replace(/^~(?=$|[\\/])/, () => homeDir);
     return path.isAbsolute(expanded) ? path.resolve(expanded) : undefined;
   };
 
-  const stateOverride = env.OPENCLAW_STATE_DIR?.trim();
-  const stateDir = stateOverride ? userPath(stateOverride) : path.join(homeDir, ".openclaw");
+  const stateDir = stateOverride ? userPath(stateOverride) : homeDirKnown ? path.join(homeDir, ".openclaw") : undefined;
   if (!stateDir) return undefined;
   const configOverride = env.OPENCLAW_CONFIG_PATH?.trim();
   const configPath = configOverride ? userPath(configOverride) : path.join(stateDir, "openclaw.json");
@@ -101,6 +109,15 @@ export function resolveOpenClawLocations(
     if (resolved && !includeRoots.includes(resolved)) includeRoots.push(resolved);
   }
 
-  const defaultStateDir = stateDir === path.join(homeDir, ".openclaw");
-  return { homeDir, osHomeDir, stateDir, configPath, workspaceDir, defaultStateDir, includeRoots };
+  const defaultStateDir = homeDirKnown && stateDir === path.join(homeDir, ".openclaw");
+  return {
+    homeDir,
+    ...(homeDirKnown ? {} : { homeDirKnown: false as const }),
+    osHomeDir,
+    stateDir,
+    configPath,
+    workspaceDir,
+    defaultStateDir,
+    includeRoots,
+  };
 }

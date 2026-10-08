@@ -27,6 +27,7 @@ export interface SkillLocations {
   stateDir: string;
   /** OpenClaw's effective home (OPENCLAW_HOME, else the OS home); "~" in config expands to it. */
   homeDir: string;
+  homeDirKnown?: false;
   /** The OS home, when it differs from homeDir; ~/.agents/skills lives here. */
   osHomeDir?: string;
   /** OPENCLAW_WORKSPACE_DIR, when set; otherwise <stateDir>/workspace. */
@@ -234,7 +235,7 @@ function agentRoster(agents: Record<string, unknown>): Record<string, unknown>[]
  * that are relative or templated, which OpenClaw resolves in ways not knowable here.
  */
 export function configuredAgentDirs(
-  locations: Pick<SkillLocations, "stateDir" | "homeDir">,
+  locations: Pick<SkillLocations, "stateDir" | "homeDir" | "homeDirKnown">,
   configInput: SkillConfigInput,
 ): { dirs: string[]; unverifiable: number } {
   const config = configInput.status === "ok" && isRecord(configInput.config) ? configInput.config : {};
@@ -245,6 +246,10 @@ export function configuredAgentDirs(
     const configured = typeof entry.agentDir === "string" ? entry.agentDir.trim() : "";
     if (!configured) {
       dirs.push(path.join(locations.stateDir, "agents", normalizeAgentId(entry.id), "agent"));
+      continue;
+    }
+    if (/^~(?=$|[\\/])/.test(configured) && locations.homeDirKnown === false) {
+      unverifiable += 1;
       continue;
     }
     const expanded = configured.replace(/^~(?=$|[\\/])/, () => locations.homeDir);
@@ -313,6 +318,10 @@ export function assessRiskySkills(
       markUnknown(trimmed, "templated-path");
       return undefined;
     }
+    if (/^~(?=$|[\\/])/.test(trimmed) && locations.homeDirKnown === false) {
+      markUnknown(trimmed, "unreadable");
+      return undefined;
+    }
     const expanded = trimmed.replace(/^~(?=$|[\\/])/, () => locations.homeDir);
     if (!path.isAbsolute(expanded)) {
       markUnknown(trimmed, "relative-path");
@@ -372,8 +381,17 @@ export function assessRiskySkills(
   }
   roots.push({ dir: path.join(locations.stateDir, "skills"), kind: "managed", symlinks: "any" });
   // OpenClaw's personal root uses the OS home; both homes are scanned.
-  roots.push({ dir: path.join(locations.osHomeDir ?? locations.homeDir, ".agents", "skills"), kind: "personal", symlinks: "any" });
-  roots.push({ dir: path.join(locations.homeDir, ".agents", "skills"), kind: "personal", symlinks: "any" });
+  const personalHomes = [
+    ...new Set(
+      [locations.osHomeDir, ...(locations.homeDirKnown === false ? [] : [locations.homeDir])].filter(
+        (dir): dir is string => dir !== undefined,
+      ),
+    ),
+  ];
+  if (personalHomes.length === 0) markUnknown("OpenClaw home .agents/skills", "unreadable");
+  for (const home of personalHomes) {
+    roots.push({ dir: path.join(home, ".agents", "skills"), kind: "personal", symlinks: "any" });
+  }
   for (const workspace of workspaces) {
     roots.push({ dir: path.join(workspace, ".agents", "skills"), kind: "workspace-agents", symlinks: "contained-or-allowed" });
     roots.push({ dir: path.join(workspace, "skills"), kind: "workspace", symlinks: "contained-or-allowed" });

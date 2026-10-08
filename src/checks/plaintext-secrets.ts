@@ -14,6 +14,7 @@ export interface SecretLocations {
   /** OPENCLAW_CONFIG_PATH, normally <stateDir>/openclaw.json. */
   configPath: string;
   homeDir: string;
+  homeDirKnown?: false;
   /** Extra $include roots from OPENCLAW_INCLUDE_ROOTS, already resolved. */
   includeRoots?: readonly string[];
   /**
@@ -495,7 +496,7 @@ export function assessPlaintextSecrets(
   const envFiles = unique([
     path.join(locations.stateDir, ".env"),
     path.join(path.dirname(locations.configPath), ".env"),
-    path.join(locations.homeDir, ".config", "openclaw", "gateway.env"),
+    ...(locations.homeDirKnown === false ? [] : [path.join(locations.homeDir, ".config", "openclaw", "gateway.env")]),
   ]);
   for (const file of envFiles) findings.push(...(read(file, (text) => scanEnvFile(file, text)) ?? []));
 
