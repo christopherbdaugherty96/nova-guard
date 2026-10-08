@@ -1097,3 +1097,25 @@ test("absolute state and config overrides are scanned without a usable home", as
     assert.ok(!result.stdout.includes("letmein"), result.stdout);
   });
 });
+
+test("an absolute config override is scanned without a usable home or state directory", async () => {
+  await tempRoot((root) => {
+    const config = path.join(root, "config", "openclaw.json");
+    write(
+      config,
+      '{ gateway: { bind: "lan", auth: { mode: "none" } }, env: { vars: { OPENAI_API_KEY: "letmein" } } }',
+    );
+    const result = runCli(["check"], {
+      HOME: "relative-home",
+      USERPROFILE: "relative-home",
+      OPENCLAW_STATE_DIR: "relative-state",
+      OPENCLAW_CONFIG_PATH: config,
+      ...pathEnv(path.join(root, "no-bin")),
+    });
+    assert.match(result.stdout, /^ {2}Gateway exposure +CRITICAL$/m, result.stdout);
+    assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, result.stdout);
+    assert.match(result.stdout, /^ {2}Risky skills +UNKNOWN$/m, result.stdout);
+    assert.match(result.stdout, /could not be checked/i, result.stdout);
+    assert.ok(!result.stdout.includes("letmein"), result.stdout);
+  });
+});
