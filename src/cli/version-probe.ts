@@ -59,12 +59,56 @@ const npmCmdShimPattern = new RegExp(
 );
 
 /**
+ * The exact openclaw.ps1 npm's cmd-shim writes beside the .cmd for the same
+ * bin; `target` is the script path relative to the shim folder, as in the
+ * .cmd. PowerShell runs this .ps1 rather than the .cmd.
+ */
+function npmPs1Shim(target: string): string {
+  const t = `"$basedir/${target.split("\\").join("/")}"`;
+  return [
+    "#!/usr/bin/env pwsh",
+    "$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent",
+    "",
+    '$exe=""',
+    'if ($PSVersionTable.PSVersion -lt "6.0" -or $IsWindows) {',
+    "  # Fix case when both the Windows and Linux builds of Node",
+    "  # are installed in the same directory",
+    '  $exe=".exe"',
+    "}",
+    "$ret=0",
+    'if (Test-Path "$basedir/node$exe") {',
+    "  # Support pipeline input",
+    "  if ($MyInvocation.ExpectingInput) {",
+    `    $input | & "$basedir/node$exe"  ${t} $args`,
+    "  } else {",
+    `    & "$basedir/node$exe"  ${t} $args`,
+    "  }",
+    "  $ret=$LASTEXITCODE",
+    "} else {",
+    "  # Support pipeline input",
+    "  if ($MyInvocation.ExpectingInput) {",
+    `    $input | & "node$exe"  ${t} $args`,
+    "  } else {",
+    `    & "node$exe"  ${t} $args`,
+    "  }",
+    "  $ret=$LASTEXITCODE",
+    "}",
+    "exit $ret",
+    "",
+  ].join("\n");
+}
+
+/**
  * The script an npm `.cmd` shim runs, if the shim is exactly what npm's
  * cmd-shim writes and its script lies under its own directory (or, for a
  * project's node_modules/.bin shim, in node_modules). Anything else could run
  * something other than the script whose metadata would be read.
  */
 export function npmShimScript(shimText: string, shimDir: string): string | undefined {
+  return npmShimTarget(shimText, shimDir)?.script;
+}
+
+function npmShimTarget(shimText: string, shimDir: string): { target: string; script: string } | undefined {
   const match = npmCmdShimPattern.exec(shimText);
   if (!match?.[1]) return undefined;
   const script = path.resolve(shimDir, ...match[1].split("\\"));
@@ -75,7 +119,7 @@ export function npmShimScript(shimText: string, shimDir: string): string | undef
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     return undefined;
   }
-  return script;
+  return { target: match[1], script };
 }
 
 function isFile(file: string): boolean {
@@ -162,8 +206,19 @@ function windowsPackageVersion(env: NodeJS.ProcessEnv): string | undefined {
     } catch {
       return undefined;
     }
-    const script = npmShimScript(text, dir);
-    if (!script || !isFile(script)) return undefined;
+    const shimTarget = npmShimTarget(text, dir);
+    if (!shimTarget || !isFile(shimTarget.script)) return undefined;
+    const { script } = shimTarget;
+    if (launchers.includes(".ps1")) {
+      // PowerShell runs openclaw.ps1 instead: it must be npm's own for the same script.
+      let ps1: string;
+      try {
+        ps1 = readFileSync(path.join(dir, "openclaw.ps1"), "utf8");
+      } catch {
+        return undefined;
+      }
+      if (ps1 !== npmPs1Shim(shimTarget.target)) return undefined;
+    }
     try {
       const packageRoot = path.dirname(script);
       const pkg = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")) as {

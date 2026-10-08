@@ -261,7 +261,7 @@ export function renderReportCard(input: ReportCardInput): string {
     const unreadable = secrets.unreadable;
     const unresolved = secrets.unresolved ?? 0;
     const unresolvedSuffix = unresolved > 0
-      ? `; a state-dependent secret location could not be resolved (${unresolved} unavailable)`
+      ? `; an OpenClaw secret location could not be resolved (${unresolved} unavailable)`
       : "";
     if (unreadable.length === 1) {
       unchecked.push(`Plaintext secrets: could not read ${displayPath(unreadable[0] as string)}${unresolvedSuffix}`);
@@ -270,7 +270,7 @@ export function renderReportCard(input: ReportCardInput): string {
         `Plaintext secrets: could not read ${unreadable.length} files, including ${displayPath(unreadable[0] as string)}${unresolvedSuffix}`,
       );
     } else if (unresolved > 0) {
-      unchecked.push(`Plaintext secrets: a state-dependent secret location could not be resolved (${unresolved} unavailable)`);
+      unchecked.push(`Plaintext secrets: an OpenClaw secret location could not be resolved (${unresolved} unavailable)`);
     } else if (secrets.grade === "unknown") {
       unchecked.push(`Plaintext secrets: ${sanitize(secrets.summary)}`);
     }

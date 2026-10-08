@@ -12,7 +12,7 @@ export interface SecretLocations {
   /** OPENCLAW_STATE_DIR, normally ~/.openclaw. */
   stateDir: string;
   /** OPENCLAW_CONFIG_PATH, normally <stateDir>/openclaw.json. */
-  configPath: string;
+  configPath: string | undefined;
   homeDir: string;
   homeDirKnown?: false;
   /** Extra $include roots from OPENCLAW_INCLUDE_ROOTS, already resolved. */
@@ -498,7 +498,7 @@ export function assessPlaintextSecrets(
 
   const envFiles = unique([
     ...(locations.stateDir ? [path.join(locations.stateDir, ".env")] : []),
-    path.join(path.dirname(locations.configPath), ".env"),
+    ...(locations.configPath ? [path.join(path.dirname(locations.configPath), ".env")] : []),
     ...(locations.homeDirKnown === false ? [] : [path.join(locations.homeDir, ".config", "openclaw", "gateway.env")]),
   ]);
   for (const file of envFiles) findings.push(...(read(file, (text) => scanEnvFile(file, text)) ?? []));
@@ -508,7 +508,7 @@ export function assessPlaintextSecrets(
   // OPENCLAW_INCLUDE_ROOTS root, and nest at most ten deep. Anything OpenClaw
   // would refuse (outside the roots, too deep, malformed) makes it reject the
   // config, so it is graded unknown rather than skipped.
-  const includeRoots = [path.dirname(locations.configPath), ...(locations.includeRoots ?? [])].map(
+  const includeRoots = [...(locations.configPath ? [path.dirname(locations.configPath)] : []), ...(locations.includeRoots ?? [])].map(
     (root) => path.resolve(root),
   );
   const insideIncludeRoot = (file: string) =>
@@ -582,7 +582,9 @@ export function assessPlaintextSecrets(
       scanConfigFile(site.target, depth + 1, site.segments, site.name);
     }
   };
-  scanConfigFile(locations.configPath, 0, [], "");
+  // A config that cannot be located (a relative override) cannot be ruled out.
+  if (locations.configPath) scanConfigFile(locations.configPath, 0, [], "");
+  else unresolved += 1;
   for (const target of tooDeep) {
     if (!reachedFiles.has(path.resolve(target))) unreadable.push(sanitize(target));
   }

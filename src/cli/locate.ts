@@ -19,7 +19,8 @@ export interface OpenClawLocations {
   osHomeDir: string | undefined;
   /** Undefined when only an absolute config override can be resolved. */
   stateDir: string | undefined;
-  configPath: string;
+  /** Undefined when OPENCLAW_CONFIG_PATH is relative: the config cannot be located. */
+  configPath: string | undefined;
   /** Undefined when OPENCLAW_PROFILE is invalid: OpenClaw then refuses to resolve it. */
   workspaceDir: string | undefined;
   /** Whether the state directory is OpenClaw's default (~/.openclaw). */
@@ -86,7 +87,9 @@ export function resolveOpenClawLocations(
 
   const stateDir = stateOverride ? userPath(stateOverride) : homeDirKnown ? path.join(homeDir, ".openclaw") : undefined;
   const configPath = configOverride ? userPath(configOverride) : stateDir ? path.join(stateDir, "openclaw.json") : undefined;
-  if (!configPath) return undefined;
+  // A relative config override resolves against the gateway's working
+  // directory: the config is unknown, but the state directory is still scanned.
+  if (!configPath && !stateDir) return undefined;
 
   let workspaceDir: string | undefined;
   const workspaceOverride = env.OPENCLAW_WORKSPACE_DIR?.trim();

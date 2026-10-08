@@ -1115,7 +1115,7 @@ test("an unresolved agent directory remains visible beside a plaintext-secret wa
     write(path.join(state, ".env"), "OPENAI_API_KEY=letmein\n");
     const result = runCli(["check"], { HOME: home, USERPROFILE: home, ...pathEnv(path.join(root, "no-bin")) });
     assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, result.stdout);
-    assert.match(result.stdout, /state-dependent secret location could not be resolved/i, result.stdout);
+    assert.match(result.stdout, /OpenClaw secret location could not be resolved/i, result.stdout);
     assert.doesNotMatch(result.stdout, /agents[\\/]unresolved-\d+[\\/]models\.json/, result.stdout);
     assert.ok(!result.stdout.includes("relative-private-agent"), result.stdout);
   });
@@ -1160,7 +1160,7 @@ test("an absolute config override is scanned without a usable home or state dire
     assert.match(result.stdout, /^ {2}Plaintext secrets +WARNING$/m, result.stdout);
     assert.match(result.stdout, /^ {2}Risky skills +UNKNOWN$/m, result.stdout);
     assert.match(result.stdout, /could not be checked/i, result.stdout);
-    assert.match(result.stdout, /state-dependent secret location could not be resolved/i, result.stdout);
+    assert.match(result.stdout, /OpenClaw secret location could not be resolved/i, result.stdout);
     assert.ok(!result.stdout.includes(path.join(process.cwd(), "OpenClaw state agents")), result.stdout);
     assert.ok(!result.stdout.includes("letmein"), result.stdout);
   });

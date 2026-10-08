@@ -56,7 +56,9 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     });
   }
 
-  const config = loadOpenClawConfig(locations.configPath, locations.includeRoots);
+  const config: ReturnType<typeof loadOpenClawConfig> = locations.configPath
+    ? loadOpenClawConfig(locations.configPath, locations.includeRoots)
+    : { status: "unreadable" };
 
   let stateIsDirectory = false;
   if (locations.stateDir) {
@@ -88,7 +90,7 @@ export async function runCheck(deps: CheckDependencies): Promise<string> {
     // (OpenClaw's resolveGlobalDotEnvPaths).
     const envFiles = [
       ...(locations.stateDir ? [path.join(locations.stateDir, ".env")] : []),
-      path.join(path.dirname(locations.configPath), ".env"),
+      ...(locations.configPath ? [path.join(path.dirname(locations.configPath), ".env")] : []),
       ...(locations.defaultStateDir ? [path.join(locations.homeDir, ".config", "openclaw", "gateway.env")] : []),
     ];
     const defined = (name: string) =>

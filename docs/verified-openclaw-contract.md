@@ -35,7 +35,9 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   (home, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `OPENCLAW_WORKSPACE_DIR`,
   which gets no `~` expansion, and include roots) against its own working
   directory, which nova-guard cannot know: such paths are not trusted, and what
-  depends on them is unknown (relative include roots are dropped). An absolute
+  depends on them is unknown (relative include roots are dropped; with a
+  relative `OPENCLAW_CONFIG_PATH` the config is unknown, but the state
+  directory is still scanned). An absolute
   `OPENCLAW_HOME` is used even when the OS home is unset or relative; only the
   personal skills root under the OS home (`~/.agents/skills`) is then unknown.
 - State: `OPENCLAW_STATE_DIR` (leading `~` expanded to OpenClaw's home), else
@@ -121,7 +123,8 @@ Verified against OpenClaw source at `b8324c64acf5979602711163cb4b5c01ea557388`
   cmd.exe reads them (quotes stripped, empty entries skipped); the first folder
   holding `openclaw<ext>` for an extension in `PATHEXT` (Windows' default list
   when unset) or `openclaw.ps1` (PowerShell) decides, and it must hold the
-  npm `.cmd` shim and nothing else but npm's `.ps1`. A relative entry before
+  npm `.cmd` shim and nothing else but npm's `.ps1`, which (as PowerShell runs
+  it instead) must be exactly what npm writes for the same script. A relative entry before
   it, another launcher there (`.exe`, `.com`, `.bat`, ...), or an
   `openclaw.exe`/`.com` anywhere on `PATH` (which a caller that starts the
   process directly would run instead of a `.cmd`) makes the version unknown.
